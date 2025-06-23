@@ -1,0 +1,3 @@
+[submodule "src/lib/epub_parse_module"]
+	path = src/lib/epub_parse_module
+	url = https://gitcode.com/floron/epub_parse_module.git
