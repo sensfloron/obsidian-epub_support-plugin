@@ -31,13 +31,12 @@ export class EpubSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('缓存大小')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+			.setName('滚动阅读')
+			.setDesc('启用后一次性渲染全部章节，支持滚动阅读；关闭则逐章翻页')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.scrolledView)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.scrolledView = value;
 					await this.plugin.saveSettings();
 				}));
 	}

@@ -4,7 +4,7 @@ import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/e
 // Remember to rename these classes and interfaces!
 
 export default class EpubSupportPlugin extends Plugin {
-	settings: EpubPluginSettings;
+	settings!: EpubPluginSettings;
 
 	async onload() {
 		await this.loadSettings();
