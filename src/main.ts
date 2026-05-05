@@ -18,7 +18,7 @@ export default class EpubSupportPlugin extends Plugin {
 		`);
 
 		this.statusBarItemEl = this.addStatusBarItem();
-		this.statusBarItemEl.setText('');
+		// this.statusBarItemEl.setText('');
 
 		this.registerView(VIEW_TYPE_EPUB, (leaf: WorkspaceLeaf) => {
 			const view = new EpubView(leaf, this.settings);

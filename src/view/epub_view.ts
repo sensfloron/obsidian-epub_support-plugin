@@ -1,6 +1,6 @@
-import { FileView, TFile, WorkspaceLeaf } from "obsidian";
+import { FileView, TFile, WorkspaceLeaf, MarkdownRenderer } from "obsidian";
 import { EpubPluginSettings } from "../setting/settings";
-import { initSync, EpubHandle } from "../lib/epub_parse_module/epub_parse_module";
+import { initSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
 import { EpubPaginator } from "./epub_paginator";
 
 export const EPUB_FILE_EXTENSION = "epub";
@@ -8,8 +8,62 @@ export const VIEW_TYPE_EPUB = "epub";
 export const ICON_EPUB = "doc-epub";
 
 const WASM_PLUGIN_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/lib/epub_parse_module/epub_parse_module_bg.wasm";
+const FONTS_DIR = ".obsidian/plugins/obsidian-epub_support-plugin/fonts";
 
 let wasmReady = false;
+let fontCssCache: string | null = null;
+
+async function loadFontCss(read: (path: string) => Promise<string>, readBinary: (path: string) => Promise<ArrayBuffer>): Promise<string> {
+	if (fontCssCache) return fontCssCache;
+
+	let css = await read(`${FONTS_DIR}/hack-subset.css`);
+
+	const fontFiles = [
+		"hack-regular-subset.woff2",
+		"hack-bold-subset.woff2",
+		"hack-italic-subset.woff2",
+		"hack-bolditalic-subset.woff2",
+	];
+
+	for (const file of fontFiles) {
+		const data = await readBinary(`${FONTS_DIR}/${file}`);
+		const bytes = new Uint8Array(data);
+		let binary = '';
+		for (let i = 0; i < bytes.length; i++) {
+			binary += String.fromCharCode(bytes[i]);
+		}
+		const base64 = btoa(binary);
+		css = css.replace(
+			`url('fonts/${file}')`,
+			`url('data:font/woff2;base64,${base64}')`
+		);
+	}
+
+	css += `
+pre, code {
+	font-family: Hack, monospace;
+	color: var(--code-normal);
+}
+pre {
+	background: var(--code-background);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	padding: 12px 16px;
+	overflow-x: auto;
+	white-space: pre;
+	line-height: 1.5;
+}
+:not(pre) > code {
+	background: var(--code-background);
+	color: var(--code-normal);
+	border-radius: 3px;
+	padding: 2px 5px;
+	font-size: 0.9em;
+}`;
+
+	fontCssCache = css;
+	return fontCssCache;
+}
 
 async function initWasmOnce(readBinary: (path: string) => Promise<ArrayBuffer>): Promise<void> {
 	if (wasmReady) return;
@@ -39,6 +93,9 @@ export class EpubView extends FileView {
 		this.contentEl.empty();
 
 		await initWasmOnce((p) => this.app.vault.adapter.readBinary(p));
+
+		// Inject Hack font CSS (with base64-embedded font files) once per view
+		await this.ensureFontStyle();
 
 		const epubData = new Uint8Array(
 			await this.app.vault.adapter.readBinary(file.path)
@@ -71,8 +128,55 @@ export class EpubView extends FileView {
 
 		this.enhanceFootnoteRefs();
 		this.observeContentChanges();
+		this.highlightCodeBlocks();
 		this.notifyPositionChange();
 		this.registerKeyboard();
+	}
+
+	private highlightCodeBlocks(): void {
+		const container =
+			this.contentEl.querySelector(".epub-paginated-track") ??
+			this.contentEl.querySelector(".epub-content");
+		if (!container) return;
+
+		const preElements = container.querySelectorAll("pre");
+		preElements.forEach((pre) => {
+			// Skip already-highlighted blocks
+			if (pre.querySelector(".code-block-pre")) return;
+
+			const text = pre.textContent ?? "";
+			if (!text.trim()) return;
+
+			const md = "```\n" + text + "\n```";
+			const wrapper = document.createElement("span");
+			MarkdownRenderer.render(
+				this.app,
+				md,
+				wrapper,
+				"",
+				this
+			).then(() => {
+				const rendered = wrapper.querySelector(".markdown-rendered pre");
+				if (rendered) {
+					pre.replaceWith(rendered);
+				}
+				wrapper.remove();
+			});
+		});
+	}
+
+	private async ensureFontStyle(): Promise<void> {
+		// Avoid duplicate injection across views
+		if (document.head.querySelector("style.epub-font-style")) return;
+
+		const css = await loadFontCss(
+			(p) => this.app.vault.adapter.read(p),
+			(p) => this.app.vault.adapter.readBinary(p)
+		);
+		const styleEl = document.createElement("style");
+		styleEl.className = "epub-font-style";
+		styleEl.textContent = css;
+		document.head.appendChild(styleEl);
 	}
 
 	private addViewActions(): void {
@@ -215,6 +319,7 @@ export class EpubView extends FileView {
 		if (track) {
 			this.fnObserver = new MutationObserver(() => {
 				this.enhanceFootnoteRefs();
+				this.highlightCodeBlocks();
 			});
 			this.fnObserver.observe(track, { childList: true, subtree: true });
 		}

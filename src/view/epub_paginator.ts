@@ -225,54 +225,53 @@ export class EpubPaginator {
 
 	private buildChapterHTML(rawHtml: string): string {
 		const overrideStyle = `
-<style class="epub-pagination-override" data-epub-paginator="true">
-  @scope (.epub-paginated-track) {
-    img, svg, video, canvas, iframe, object, embed {
-      max-width: 33.33% !important;
-      max-height: 40vh !important;
-      width: auto !important;
-      height: auto !important;
-      display: block;
-      margin-left: auto !important;
-      margin-right: auto !important;
-    }
-    /* Inline footnote images */
-    img.qqreader-footnote,
-    img.duokan-footnote,
-    img[class*="footnote"] {
-      max-width: 1.2em !important;
-      max-height: 1.2em !important;
-      display: inline !important;
-      vertical-align: super;
-      margin: 0 !important;
-      cursor: pointer;
-    }
-    pre, code {
-      white-space: pre-wrap !important;
-      word-break: break-word !important;
-      overflow-wrap: break-word !important;
-    }
-    table {
-      max-width: 100% !important;
-      word-break: break-word;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      break-after: avoid;
-      break-inside: avoid;
-    }
-    figure, .figure, .image, .illustration, table {
-      break-inside: avoid;
-    }
-    p {
-      orphans: 2;
-      widows: 2;
-    }
-    body {
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-  }
-</style>`;
+	<style class="epub-pagination-override" data-epub-paginator="true">
+	  @scope (.epub-paginated-track) {
+	    img, svg, video, canvas, iframe, object, embed {
+	      max-width: 100% !important;
+	      width: auto !important;
+	      height: auto !important;
+	      display: block;
+	      margin-left: auto !important;
+	      margin-right: auto !important;
+	    }
+	    /* Inline footnote images */
+	    img.qqreader-footnote,
+	    img.duokan-footnote,
+	    img[class*="footnote"] {
+	      max-width: 1.2em !important;
+	      max-height: 1.2em !important;
+	      display: inline !important;
+	      vertical-align: super;
+	      margin: 0 !important;
+	      cursor: pointer;
+	    }
+	    pre, code {
+	      white-space: pre-wrap !important;
+	      word-break: break-word !important;
+	      overflow-wrap: break-word !important;
+	    }
+	    table {
+	      max-width: 100% !important;
+	      word-break: break-word;
+	    }
+	    h1, h2, h3, h4, h5, h6 {
+	      break-after: avoid;
+	      break-inside: avoid;
+	    }
+	    figure, .figure, .image, .illustration, table {
+	      break-inside: avoid;
+	    }
+	    p {
+	      orphans: 2;
+	      widows: 2;
+	    }
+	    body {
+	      margin: 0 !important;
+	      padding: 0 !important;
+	    }
+	  }
+	</style>`;
 		// Override AFTER EPUB content so it wins the cascade
 		return rawHtml + overrideStyle;
 	}

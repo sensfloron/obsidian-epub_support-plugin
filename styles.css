@@ -147,7 +147,7 @@
     z-index: 100;
     max-width: 400px;
     min-width: 200px;
-    max-height: 60vh;
+    /* max-height: 60vh; */
     overflow-y: auto;
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
