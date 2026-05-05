@@ -1,8 +1,182 @@
-/*
+/* === Paginated View === */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.epub-paginated-viewport {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+    background: var(--background-primary);
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;
+}
 
-If your plugin does not need CSS, delete this file.
+.epub-paginated-track {
+    position: relative;
+    will-change: transform;
+}
 
-*/
+/* Prevent horizontal overflow from EPUB content */
+.epub-paginated-track img,
+.epub-paginated-track svg,
+.epub-paginated-track video,
+.epub-paginated-track iframe {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+.epub-paginated-track h1,
+.epub-paginated-track h2,
+.epub-paginated-track h3,
+.epub-paginated-track h4,
+.epub-paginated-track h5,
+.epub-paginated-track h6 {
+    break-after: avoid;
+    break-inside: avoid;
+}
+
+.epub-paginated-track figure,
+.epub-paginated-track table,
+.epub-paginated-track .figure,
+.epub-paginated-track .image {
+    break-inside: avoid;
+}
+
+/* Page indicator overlay */
+.epub-page-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    padding: 4px 16px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+.epub-page-indicator.visible {
+    opacity: 0.85;
+}
+
+/* === Scrolled View === */
+
+.epub-content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 0 16px;
+}
+
+.epub-chapter {
+    margin-bottom: 32px;
+}
+
+/* === Footnote Styles === */
+
+/* Footnote images — small inline superscript indicators, clickable */
+.epub-paginated-track img.qqreader-footnote,
+.epub-paginated-track img.duokan-footnote,
+.epub-paginated-track img[class*="footnote"],
+.epub-paginated-track img.fn-img,
+.epub-chapter img.qqreader-footnote,
+.epub-chapter img.duokan-footnote,
+.epub-chapter img[class*="footnote"],
+.epub-chapter img.fn-img {
+    max-width: 1.2em !important;
+    max-height: 1.2em !important;
+    display: inline !important;
+    vertical-align: super;
+    margin: 0 !important;
+    cursor: pointer;
+    opacity: 0.85;
+    transition: opacity 0.15s ease;
+}
+
+.epub-paginated-track img.qqreader-footnote:hover,
+.epub-paginated-track img.duokan-footnote:hover,
+.epub-paginated-track img[class*="footnote"]:hover,
+.epub-paginated-track img.fn-img:hover,
+.epub-chapter img.qqreader-footnote:hover,
+.epub-chapter img.duokan-footnote:hover,
+.epub-chapter img[class*="footnote"]:hover,
+.epub-chapter img.fn-img:hover {
+    opacity: 1;
+}
+
+/* Footnote reference links — superscript, accent-colored, clickable */
+.epub-paginated-track sup a[href^="#"],
+.epub-paginated-track a.fn-ref,
+.epub-chapter sup a[href^="#"],
+.epub-chapter a.fn-ref {
+    color: var(--text-accent);
+    text-decoration: none;
+    font-size: 0.75em;
+    vertical-align: super;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 1px;
+    border-radius: 2px;
+    transition: background 0.15s ease;
+}
+
+.epub-paginated-track sup a[href^="#"]:hover,
+.epub-paginated-track a.fn-ref:hover,
+.epub-chapter sup a[href^="#"]:hover,
+.epub-chapter a.fn-ref:hover {
+    background: var(--text-accent);
+    color: var(--text-on-accent);
+}
+
+/* Footnote popover backdrop */
+.epub-footnote-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+}
+
+/* Footnote popover */
+.epub-footnote-popover {
+    position: absolute;
+    z-index: 100;
+    max-width: 400px;
+    min-width: 200px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 0.85em;
+    line-height: 1.6;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+    pointer-events: auto;
+    word-break: break-word;
+}
+
+/* Footnote number inside popover */
+.epub-footnote-popover .fn-num {
+    font-weight: 600;
+    color: var(--text-accent);
+    margin-right: 4px;
+}
+
+/* Backlink inside footnote popover */
+.epub-footnote-popover .fn-backlink {
+    display: inline-block;
+    margin-left: 6px;
+    color: var(--text-accent);
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.9em;
+}
+
+.epub-footnote-popover .fn-backlink:hover {
+    text-decoration: underline;
+}

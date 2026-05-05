@@ -1,7 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx esbuild *)"
+      "Bash(npx esbuild *)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(cargo check *)",
+      "Bash(wasm-pack build *)",
+      "Bash(cargo test *)",
+      "Bash(npx tsc *)",
+      "Bash(node esbuild.config.mjs production)",
+      "Bash(cp pkg/epub_parse_module_bg.wasm ../../lib/epub_parse_module/epub_parse_module_bg.wasm)",
+      "Bash(cp pkg/epub_parse_module.js ../../lib/epub_parse_module/epub_parse_module.js)",
+      "Bash(sed -i '357s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\/\\\\\\\\/ Clamp bottom to viewport/' src/view/epub_view.ts)",
+      "Bash(sed -i '358s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\if \\(top + popoverH > window.innerHeight - 8\\) {/' src/view/epub_view.ts)",
+      "Bash(sed -i '359s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\ttop = window.innerHeight - popoverH - 8;/' src/view/epub_view.ts)",
+      "Bash(sed -i '360s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\}/' src/view/epub_view.ts)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

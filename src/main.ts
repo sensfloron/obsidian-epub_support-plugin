@@ -1,10 +1,10 @@
 import { addIcon, Plugin, WorkspaceLeaf } from 'obsidian';
 import { EpubSettingTab, EpubPluginSettings, DEFAULT_SETTINGS } from 'setting/settings'
 import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/epub_view'
-// Remember to rename these classes and interfaces!
 
 export default class EpubSupportPlugin extends Plugin {
 	settings!: EpubPluginSettings;
+	private statusBarItemEl!: HTMLElement;
 
 	async onload() {
 		await this.loadSettings();
@@ -17,28 +17,43 @@ export default class EpubSupportPlugin extends Plugin {
 			/>
 		`);
 
+		this.statusBarItemEl = this.addStatusBarItem();
+		this.statusBarItemEl.setText('');
+
 		this.registerView(VIEW_TYPE_EPUB, (leaf: WorkspaceLeaf) => {
-			return new EpubView(leaf, this.settings);
+			const view = new EpubView(leaf, this.settings);
+			view.onPositionChange = (label) => {
+				this.statusBarItemEl.setText(label);
+			};
+			return view;
 		});
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('文本字数');
+
 		try {
 			this.registerExtensions([EPUB_FILE_EXTENSION], VIEW_TYPE_EPUB);
 		} catch (error) {
 			console.log(`Existing file extension ${EPUB_FILE_EXTENSION}`);
 		}
-		// This adds a settings tab so the user can configure various aspects of the plugin
+
 		this.addSettingTab(new EpubSettingTab(this.app, this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				this.refreshStatusBar();
+			})
+		);
+
 		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
 			// console.log('click', evt);
 		});
+	}
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+	private refreshStatusBar(): void {
+		const view = this.app.workspace.activeLeaf?.view;
+		if (view instanceof EpubView) {
+			this.statusBarItemEl.setText(view.getPositionLabel());
+		} else {
+			this.statusBarItemEl.setText('');
+		}
 	}
 
 	onunload() {
@@ -46,13 +61,16 @@ export default class EpubSupportPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const data: Record<string, unknown> = await this.loadData() ?? {};
+		if (typeof data.scrolledView === 'boolean') {
+			data.viewMode = data.scrolledView ? 'scrolled' : 'paginated';
+			delete data.scrolledView;
+			await this.saveData(data);
+		}
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
 }
-
-
-
