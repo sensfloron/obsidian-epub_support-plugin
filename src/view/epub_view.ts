@@ -1,16 +1,20 @@
 import { FileView, TFile, WorkspaceLeaf, MarkdownRenderer } from "obsidian";
 import { EpubPluginSettings } from "../setting/settings";
-import { initSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
+import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
+import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
+import { EpubProgress, ProgressStore } from "../lib/progress_store";
 
 export const EPUB_FILE_EXTENSION = "epub";
 export const VIEW_TYPE_EPUB = "epub";
 export const ICON_EPUB = "doc-epub";
 
-const WASM_PLUGIN_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/lib/epub_parse_module/epub_parse_module_bg.wasm";
+const PARSE_WASM_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/lib/epub_parse_module/epub_parse_module_bg.wasm";
+const NOTE_WASM_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/lib/epub_note_module/epub_note_module_bg.wasm";
 const FONTS_DIR = ".obsidian/plugins/obsidian-epub_support-plugin/fonts";
 
-let wasmReady = false;
+let parseWasmReady = false;
+let noteWasmReady = false;
 let fontCssCache: string | null = null;
 
 async function loadFontCss(read: (path: string) => Promise<string>, readBinary: (path: string) => Promise<ArrayBuffer>): Promise<string> {
@@ -65,16 +69,26 @@ pre {
 	return fontCssCache;
 }
 
-async function initWasmOnce(readBinary: (path: string) => Promise<ArrayBuffer>): Promise<void> {
-	if (wasmReady) return;
-	const bin = await readBinary(WASM_PLUGIN_PATH);
-	initSync({ module: new Uint8Array(bin) });
-	wasmReady = true;
+async function initParseWasmOnce(readBinary: (path: string) => Promise<ArrayBuffer>): Promise<void> {
+	if (parseWasmReady) return;
+	const bin = await readBinary(PARSE_WASM_PATH);
+	initParseSync({ module: new Uint8Array(bin) });
+	parseWasmReady = true;
 }
+
+async function initNoteWasmOnce(readBinary: (path: string) => Promise<ArrayBuffer>): Promise<void> {
+	if (noteWasmReady) return;
+	const bin = await readBinary(NOTE_WASM_PATH);
+	initNoteSync({ module: new Uint8Array(bin) });
+	noteWasmReady = true;
+}
+
+const SAVE_DEBOUNCE_MS = 300;
 
 export class EpubView extends FileView {
 	allowNoFile: false = false;
 	private handle: EpubHandle | null = null;
+	private textProcessor: TextProcessor | null = null;
 	private currentChapter = 0;
 	private contentArea: HTMLElement | null = null;
 	private paginator: EpubPaginator | null = null;
@@ -82,19 +96,27 @@ export class EpubView extends FileView {
 	private footnotePopover: HTMLElement | null = null;
 	private footnoteBackdrop: HTMLElement | null = null;
 	private fnObserver: MutationObserver | null = null;
+	private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	onPositionChange: ((label: string) => void) | null = null;
+	onProgressSave: (() => void) | null = null;
 
-	constructor(leaf: WorkspaceLeaf, private settings: EpubPluginSettings) {
+	constructor(
+		leaf: WorkspaceLeaf,
+		private settings: EpubPluginSettings,
+		private progressStore: ProgressStore,
+	) {
 		super(leaf);
 	}
 
 	async onLoadFile(file: TFile): Promise<void> {
 		this.contentEl.empty();
 
-		await initWasmOnce((p) => this.app.vault.adapter.readBinary(p));
+		await Promise.all([
+			initParseWasmOnce((p) => this.app.vault.adapter.readBinary(p)),
+			initNoteWasmOnce((p) => this.app.vault.adapter.readBinary(p)),
+		]);
 
-		// Inject Hack font CSS (with base64-embedded font files) once per view
 		await this.ensureFontStyle();
 
 		const epubData = new Uint8Array(
@@ -103,27 +125,56 @@ export class EpubView extends FileView {
 
 		this.handle?.free();
 		this.handle = new EpubHandle(epubData);
+		this.textProcessor = new TextProcessor();
 		this.currentChapter = 0;
 
 		this.addViewActions();
-
 		this.ensureFootnoteInfrastructure();
+
+		// Check for saved progress before rendering
+		const savedProgress = this.progressStore.getProgress(file.path);
+
+		if (savedProgress && savedProgress.totalChapters === this.handle.total_chapters()) {
+			// Restore chapter position
+			this.currentChapter = Math.min(savedProgress.chapterIndex, this.handle.total_chapters() - 1);
+		}
 
 		if (this.settings.viewMode === 'scrolled') {
 			this.renderAllChapters();
+			if (savedProgress && savedProgress.scrollFraction > 0) {
+				requestAnimationFrame(() => {
+					const el = this.contentEl.querySelector('.epub-content');
+					if (el) {
+						el.scrollTop = savedProgress.scrollFraction * el.scrollHeight;
+					}
+				});
+			}
 		} else {
 			this.paginator?.destroy();
 			this.paginator = new EpubPaginator(this.settings);
 			this.paginator.onChapterBoundary = (dir) => this.navigateChapter(dir);
 			this.paginator.setOnPageChange(() => {
 				this.notifyPositionChange();
+				this.debounceSaveProgress();
 			});
 
 			this.contentArea = this.contentEl.createDiv("epub-content");
 			this.paginator.attach(this.contentArea);
 
-			const html = this.handle.get_chapter_content(this.currentChapter);
-			this.paginator.loadChapter(html);
+			const rawHtml = this.handle.get_chapter_content(this.currentChapter);
+			const markedHtml = this.textProcessor.mark_sentences(rawHtml);
+			this.paginator.loadChapter(markedHtml);
+
+			// Restore page if progress exists
+			if (savedProgress && savedProgress.pageIndex) {
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => {
+						this.paginator?.goToPage(savedProgress.pageIndex!);
+					});
+				});
+			} else {
+				this.saveCurrentProgress();
+			}
 		}
 
 		this.enhanceFootnoteRefs();
@@ -131,6 +182,40 @@ export class EpubView extends FileView {
 		this.highlightCodeBlocks();
 		this.notifyPositionChange();
 		this.registerKeyboard();
+	}
+
+	private saveCurrentProgress(): void {
+		if (!this.handle || !this.file) return;
+
+		const total = this.handle.total_chapters();
+		const progress: EpubProgress = {
+			epubPath: this.file.path,
+			chapterIndex: this.currentChapter,
+			pageIndex: this.paginator?.getPageInfo().current ?? 0,
+			sentenceIndex: this.paginator?.getFirstVisibleSentenceIndex() ?? 0,
+			scrollFraction: 0,
+			totalChapters: total,
+			lastReadAt: 0,
+			completionPercent: total > 0
+				? Math.round(((this.currentChapter + 1) / total) * 100)
+				: 0,
+		};
+
+		this.progressStore.setProgress(progress);
+	}
+
+	private debounceSaveProgress(): void {
+		if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+		this.saveDebounceTimer = setTimeout(() => {
+			this.saveCurrentProgress();
+			this.onProgressSave?.();
+		}, SAVE_DEBOUNCE_MS);
+	}
+
+	private flashSaveProgress(): void {
+		if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+		this.saveCurrentProgress();
+		this.onProgressSave?.();
 	}
 
 	private highlightCodeBlocks(): void {
@@ -141,7 +226,6 @@ export class EpubView extends FileView {
 
 		const preElements = container.querySelectorAll("pre");
 		preElements.forEach((pre) => {
-			// Skip already-highlighted blocks
 			if (pre.querySelector(".code-block-pre")) return;
 
 			const text = pre.textContent ?? "";
@@ -166,7 +250,6 @@ export class EpubView extends FileView {
 	}
 
 	private async ensureFontStyle(): Promise<void> {
-		// Avoid duplicate injection across views
 		if (document.head.querySelector("style.epub-font-style")) return;
 
 		const css = await loadFontCss(
@@ -214,20 +297,22 @@ export class EpubView extends FileView {
 	}
 
 	private navigateChapter(delta: number): void {
-		if (!this.handle) return;
+		if (!this.handle || !this.textProcessor) return;
 		const total = this.handle.total_chapters();
 		const next = this.currentChapter + delta;
 		if (next < 0 || next >= total) return;
 		this.currentChapter = next;
 
 		if (this.settings.viewMode === 'paginated' && this.paginator) {
-			const html = this.handle.get_chapter_content(this.currentChapter);
-			this.paginator.loadChapter(html, delta as -1 | 0 | 1);
+			const rawHtml = this.handle.get_chapter_content(this.currentChapter);
+			const markedHtml = this.textProcessor.mark_sentences(rawHtml);
+			this.paginator.loadChapter(markedHtml, delta as -1 | 0 | 1);
 		} else {
 			this.scrollToChapter(this.currentChapter);
 		}
 		this.enhanceFootnoteRefs();
 		this.notifyPositionChange();
+		this.flashSaveProgress();
 	}
 
 	private scrollToChapter(index: number): void {
@@ -236,12 +321,13 @@ export class EpubView extends FileView {
 	}
 
 	private renderAllChapters(): void {
-		if (!this.handle) return;
+		if (!this.handle || !this.textProcessor) return;
 		this.contentArea = this.contentEl.createDiv("epub-content");
 		for (let i = 0, n = this.handle.total_chapters(); i < n; i++) {
 			const el = this.contentArea.createDiv("epub-chapter");
 			el.id = `epub-chapter-${i}`;
-			el.innerHTML = this.handle.get_chapter_content(i);
+			const rawHtml = this.handle.get_chapter_content(i);
+			el.innerHTML = this.textProcessor.mark_sentences(rawHtml);
 		}
 	}
 
@@ -272,8 +358,14 @@ export class EpubView extends FileView {
 	onunload(): void {
 		this.fnObserver?.disconnect();
 		this.fnObserver = null;
+		if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+		// Save final progress before unloading
+		this.saveCurrentProgress();
+		this.onProgressSave?.();
 		this.paginator?.destroy();
 		this.paginator = null;
+		this.textProcessor?.free();
+		this.textProcessor = null;
 		this.handle?.free();
 		this.handle = null;
 	}
@@ -331,7 +423,6 @@ export class EpubView extends FileView {
 			this.contentEl.querySelector(".epub-content");
 		if (!container) return;
 
-		// Pause observer to avoid feedback loop
 		this.fnObserver?.disconnect();
 
 		const links = container.querySelectorAll("a[href^='#']");
@@ -352,7 +443,6 @@ export class EpubView extends FileView {
 			}
 		});
 
-		// Mark footnote images (e.g. QQ reader inline note icons)
 		const fnImgs = container.querySelectorAll(
 			"img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
 		);
@@ -362,7 +452,6 @@ export class EpubView extends FileView {
 			}
 		});
 
-		// Resume observer
 		this.observeContentChanges();
 	}
 
@@ -383,7 +472,6 @@ export class EpubView extends FileView {
 		const target = document.getElementById(id);
 		if (!target) return null;
 
-		// The target itself or a descendant of a footnote container
 		if (
 			target.getAttribute("epub:type") === "footnote" ||
 			target.tagName === "ASIDE" ||
@@ -395,13 +483,11 @@ export class EpubView extends FileView {
 			return target;
 		}
 
-		// Walk up to find a footnote container
 		const ancestor = target.closest(
 			"aside, .footnote, .footnotes, .endnote, [epub\\:type='footnote'], li.footnote"
 		);
 		if (ancestor) return ancestor as HTMLElement;
 
-		// Just return the target itself if it has text content
 		if (target.textContent?.trim()) return target;
 
 		return null;
@@ -410,13 +496,11 @@ export class EpubView extends FileView {
 	private onFootnoteClick = (evt: MouseEvent): void => {
 		const target = evt.target as HTMLElement;
 
-		// If clicking a backlink inside the popover, dismiss it
 		if (target.closest(".epub-footnote-popover")) {
 			this.hideFootnotePopover();
 			return;
 		}
 
-		// Handle image-based footnotes (e.g. qqreader-footnote)
 		const fnImg = target.closest(
 			"img.fn-img, img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
 		) as HTMLImageElement | null;
@@ -427,7 +511,6 @@ export class EpubView extends FileView {
 			return;
 		}
 
-		// Handle link-based footnotes
 		const ref = target.closest("a[href^='#']") as HTMLAnchorElement | null;
 		if (!ref) return;
 
@@ -448,13 +531,11 @@ export class EpubView extends FileView {
 	private showFootnotePopoverForElement(fnEl: HTMLElement, evt: MouseEvent): void {
 		if (!this.footnotePopover || !this.footnoteBackdrop) return;
 
-		// Clone the footnote content to avoid moving the original
 		const clone = fnEl.cloneNode(true) as HTMLElement;
 		clone.querySelectorAll("a[href^='#']").forEach((a) => {
 			a.classList.add("fn-backlink");
 		});
 
-		// Build clean popover content
 		const numEl = clone.querySelector("sup, .footnote-num, .fn-num");
 		const numText = numEl?.textContent?.trim() ?? "";
 
@@ -495,15 +576,12 @@ export class EpubView extends FileView {
 		let left = evt.clientX - popoverW / 2;
 		let top = evt.clientY - popoverH - 12;
 
-		// Clamp horizontally
 		left = Math.max(8, Math.min(left, window.innerWidth - popoverW - 8));
 
-		// If not enough room above, show below
 		if (top < 8) {
 			top = evt.clientY + 20;
 		}
 
-		// Clamp bottom to viewport
 		if (top + popoverH > window.innerHeight - 8) {
 			top = window.innerHeight - popoverH - 8;
 		}

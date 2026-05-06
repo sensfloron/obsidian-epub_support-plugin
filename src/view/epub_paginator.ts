@@ -128,6 +128,28 @@ export class EpubPaginator {
 		return { current: this.currentPage, total: this.totalPages };
 	}
 
+	/** Get the data-si index of the first visible sentence element on the current page. */
+	getFirstVisibleSentenceIndex(): number {
+		if (!this.trackEl || !this.pageWidth) return 0;
+
+		const sentenceNodes = this.trackEl.querySelectorAll<HTMLElement>('.epub-s');
+		if (sentenceNodes.length === 0) return 0;
+
+		const sentences = Array.from(sentenceNodes);
+		const trackRect = this.trackEl.getBoundingClientRect();
+		const visibleLeft = trackRect.left;
+
+		for (const s of sentences) {
+			const rect = s.getBoundingClientRect();
+			// Sentence is at least partially visible
+			if (rect.right > visibleLeft && rect.left < visibleLeft + this.pageWidth) {
+				const si = s.getAttribute('data-si');
+				if (si !== null) return parseInt(si, 10);
+			}
+		}
+		return 0;
+	}
+
 	setOnPageChange(cb: (current: number, total: number) => void): void {
 		this.onPageChangeCallback = cb;
 	}

@@ -1,12 +1,15 @@
 import { addIcon, Plugin, WorkspaceLeaf } from 'obsidian';
 import { EpubSettingTab, EpubPluginSettings, DEFAULT_SETTINGS } from 'setting/settings'
 import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/epub_view'
+import { ProgressStore, PROGRESSES_KEY } from 'lib/progress_store'
 
 export default class EpubSupportPlugin extends Plugin {
 	settings!: EpubPluginSettings;
 	private statusBarItemEl!: HTMLElement;
+	progressStore!: ProgressStore;
 
 	async onload() {
+		this.progressStore = new ProgressStore();
 		await this.loadSettings();
 
 		addIcon(ICON_EPUB, `
@@ -18,13 +21,13 @@ export default class EpubSupportPlugin extends Plugin {
 		`);
 
 		this.statusBarItemEl = this.addStatusBarItem();
-		// this.statusBarItemEl.setText('');
 
 		this.registerView(VIEW_TYPE_EPUB, (leaf: WorkspaceLeaf) => {
-			const view = new EpubView(leaf, this.settings);
+			const view = new EpubView(leaf, this.settings, this.progressStore);
 			view.onPositionChange = (label) => {
 				this.statusBarItemEl.setText(label);
 			};
+			view.onProgressSave = () => this.saveProgressData();
 			return view;
 		});
 
@@ -57,7 +60,6 @@ export default class EpubSupportPlugin extends Plugin {
 	}
 
 	onunload() {
-
 	}
 
 	async loadSettings() {
@@ -68,9 +70,21 @@ export default class EpubSupportPlugin extends Plugin {
 			await this.saveData(data);
 		}
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+		this.progressStore.load(data);
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData(this.buildSavePayload());
+	}
+
+	async saveProgressData() {
+		await this.saveData(this.buildSavePayload());
+	}
+
+	private buildSavePayload(): Record<string, unknown> {
+		return {
+			...this.settings as unknown as Record<string, unknown>,
+			[PROGRESSES_KEY]: this.progressStore.toJSON(),
+		};
 	}
 }

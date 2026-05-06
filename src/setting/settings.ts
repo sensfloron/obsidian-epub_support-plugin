@@ -85,5 +85,37 @@ export class EpubSettingTab extends PluginSettingTab {
 					this.plugin.settings.transitionDuration = value;
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName('笔记存储路径')
+			.setDesc('阅读笔记和标注的保存位置')
+			.addText(text => text
+				.setPlaceholder('/')
+				.setValue(this.plugin.settings.notePath)
+				.onChange(async (value) => {
+					this.plugin.settings.notePath = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('与 EPUB 同目录存储')
+			.setDesc('是否在与 EPUB 文件相同的目录下创建笔记')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.useSameFolder)
+				.onChange(async (value) => {
+					this.plugin.settings.useSameFolder = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('默认标签')
+			.setDesc('新创建的阅读笔记自动添加的标签（空格分隔）')
+			.addText(text => text
+				.setPlaceholder('notes/booknotes')
+				.setValue(this.plugin.settings.tags)
+				.onChange(async (value) => {
+					this.plugin.settings.tags = value;
+					await this.plugin.saveSettings();
+				}));
 	}
 }
