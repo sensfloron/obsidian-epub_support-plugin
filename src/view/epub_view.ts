@@ -1,5 +1,5 @@
 import { FileView, TFile, WorkspaceLeaf, MarkdownRenderer } from "obsidian";
-import { EpubPluginSettings } from "../setting/settings";
+import { EpubPluginSettings, PAGE_TURN_COOLDOWN_MS } from "../setting/settings";
 import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
 import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
@@ -97,6 +97,7 @@ export class EpubView extends FileView {
 	private footnoteBackdrop: HTMLElement | null = null;
 	private fnObserver: MutationObserver | null = null;
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	private lastKeyTime = 0;
 
 	onPositionChange: ((label: string) => void) | null = null;
 	onProgressSave: (() => void) | null = null;
@@ -339,16 +340,21 @@ export class EpubView extends FileView {
 			const tag = (evt.target as HTMLElement)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
+			const now = Date.now();
+			if (now - this.lastKeyTime < PAGE_TURN_COOLDOWN_MS) return;
+
 			switch (evt.key) {
 				case 'ArrowLeft':
 				case 'PageUp':
 					evt.preventDefault();
+					this.lastKeyTime = now;
 					this.paginator.navigatePage(-1);
 					break;
 				case 'ArrowRight':
 				case ' ':
 				case 'PageDown':
 					evt.preventDefault();
+					this.lastKeyTime = now;
 					this.paginator.navigatePage(1);
 					break;
 			}

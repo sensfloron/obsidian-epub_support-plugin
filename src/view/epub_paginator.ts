@@ -1,4 +1,4 @@
-import { EpubPluginSettings } from "../setting/settings";
+import { EpubPluginSettings, PAGE_TURN_COOLDOWN_MS } from "../setting/settings";
 
 export class EpubPaginator {
 	private viewportEl: HTMLElement | null = null;
@@ -16,6 +16,7 @@ export class EpubPaginator {
 	private touchStartX = 0;
 	private touchStartY = 0;
 	private swipeThreshold = 50;
+	private lastWheelTime = 0;
 
 	private settings: EpubPluginSettings;
 	private onPageChangeCallback: ((current: number, total: number) => void) | null = null;
@@ -304,6 +305,7 @@ export class EpubPaginator {
 		if (!this.viewportEl) return;
 		this.viewportEl.addEventListener("touchstart", this.onTouchStart, { passive: true });
 		this.viewportEl.addEventListener("touchend", this.onTouchEnd, { passive: true });
+		this.viewportEl.addEventListener("wheel", this.onWheel, { passive: false });
 
 		this.resizeObserver = new ResizeObserver(() => this.onResize());
 		this.resizeObserver.observe(this.viewportEl);
@@ -313,6 +315,7 @@ export class EpubPaginator {
 		if (this.viewportEl) {
 			this.viewportEl.removeEventListener("touchstart", this.onTouchStart);
 			this.viewportEl.removeEventListener("touchend", this.onTouchEnd);
+			this.viewportEl.removeEventListener("wheel", this.onWheel);
 		}
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
@@ -321,6 +324,31 @@ export class EpubPaginator {
 	private onTouchStart = (e: TouchEvent): void => {
 		this.touchStartX = e.touches[0].clientX;
 		this.touchStartY = e.touches[0].clientY;
+	};
+
+	private onWheel = (e: WheelEvent): void => {
+		// Only handle if not transitioning and cooldown has passed
+		const now = Date.now();
+		if (this.isTransitioning) return;
+		if (now - this.lastWheelTime < PAGE_TURN_COOLDOWN_MS) return;
+
+		if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+			// Horizontal scroll: treat as page turn
+			this.lastWheelTime = now;
+			if (e.deltaX > 0) {
+				this.navigatePage(1);
+			} else {
+				this.navigatePage(-1);
+			}
+		} else if (Math.abs(e.deltaY) > 10) {
+			// Vertical scroll: treat as page turn
+			this.lastWheelTime = now;
+			if (e.deltaY > 0) {
+				this.navigatePage(1);
+			} else {
+				this.navigatePage(-1);
+			}
+		}
 	};
 
 	private onTouchEnd = (e: TouchEvent): void => {
