@@ -167,10 +167,11 @@ export class EpubView extends FileView {
 			this.paginator.loadChapter(markedHtml);
 
 			// Restore page if progress exists
-			if (savedProgress && savedProgress.pageIndex) {
+			if (savedProgress && savedProgress.pageIndex != null) {
+				const pageIndex = savedProgress.pageIndex;
 				requestAnimationFrame(() => {
 					requestAnimationFrame(() => {
-						this.paginator?.goToPage(savedProgress.pageIndex!);
+						this.paginator?.goToPage(pageIndex);
 					});
 				});
 			} else {
