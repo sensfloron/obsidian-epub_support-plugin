@@ -23,3 +23,5 @@ data.json
 
 # WASM Module Build
 /lib
+
+.claude/
