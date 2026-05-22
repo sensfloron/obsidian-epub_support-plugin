@@ -137,6 +137,7 @@ export class EpubPaginator {
 		this.updateTransform(true);
 		this.updatePageIndicator();
 		this.startTransitionGuard();
+		this.onPageChangeCallback?.(this.currentPage, this.totalPages);
 		return true;
 	}
 
@@ -145,6 +146,7 @@ export class EpubPaginator {
 		this.currentPage = index;
 		this.updateTransform(false);
 		this.updatePageIndicator();
+		this.onPageChangeCallback?.(this.currentPage, this.totalPages);
 	}
 
 	getPageInfo(): { current: number; total: number } {
