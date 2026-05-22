@@ -1,4 +1,4 @@
-import { addIcon, Plugin, WorkspaceLeaf } from 'obsidian';
+import { addIcon, Platform, Plugin, WorkspaceLeaf } from 'obsidian';
 import { EpubSettingTab, EpubPluginSettings, DEFAULT_SETTINGS } from 'setting/settings'
 import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/epub_view'
 import { EpubOutlineView, VIEW_TYPE_EPUB_OUTLINE, TocItem } from 'view/epub_outline_view'
@@ -8,6 +8,8 @@ export default class EpubSupportPlugin extends Plugin {
 	settings!: EpubPluginSettings;
 	private statusBarItemEl!: HTMLElement;
 	progressStore!: ProgressStore;
+	private currentToc: TocItem[] = [];
+	private currentChapterIndex = 0;
 
 	async onload() {
 		this.progressStore = new ProgressStore();
@@ -35,7 +37,16 @@ export default class EpubSupportPlugin extends Plugin {
 		});
 
 		this.registerView(VIEW_TYPE_EPUB_OUTLINE, (leaf: WorkspaceLeaf) => {
-			return new EpubOutlineView(leaf);
+			const view = new EpubOutlineView(leaf);
+			view.setToc(this.currentToc);
+			view.setCurrentChapter(this.currentChapterIndex);
+			view.setOnNavigate((chapterIndex) => this.navigateToChapter(chapterIndex));
+			view.setOutlineCollapsed(this.settings.outlineCollapsed);
+			view.onCollapseToggle = () => {
+				this.settings.outlineCollapsed = !this.settings.outlineCollapsed;
+				this.saveSettings();
+			};
+			return view;
 		});
 
 		this.addRibbonIcon("list", "EPUB 目录", () => this.activateOutline());
@@ -51,6 +62,7 @@ export default class EpubSupportPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.refreshStatusBar();
+				this.syncOutline();
 			})
 		);
 
@@ -68,7 +80,29 @@ export default class EpubSupportPlugin extends Plugin {
 		}
 	}
 
+	private syncOutline(): void {
+		const activeView = this.app.workspace.activeLeaf?.view;
+		if (activeView instanceof EpubView) {
+			this.updateOutline(activeView.getTocData());
+			this.updateOutlineChapter(activeView.getCurrentChapter());
+		}
+		// 非 EPUB 标签页时保持当前目录不变，不清空
+	}
+
+	private navigateToChapter(chapterIndex: number): void {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB).forEach((leaf) => {
+			if (leaf.view instanceof EpubView) {
+				leaf.view.navigateToChapter(chapterIndex);
+			}
+		});
+		// 移动端收起侧边栏（overlay 模式），桌面端保持侧边栏展开
+		if (Platform.isMobile) {
+			this.app.workspace.rightSplit?.collapse();
+		}
+	}
+
 	private updateOutline(toc: TocItem[]): void {
+		this.currentToc = toc;
 		this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB_OUTLINE).forEach((leaf) => {
 			if (leaf.view instanceof EpubOutlineView) {
 				leaf.view.setToc(toc);
@@ -77,6 +111,7 @@ export default class EpubSupportPlugin extends Plugin {
 	}
 
 	private updateOutlineChapter(index: number): void {
+		this.currentChapterIndex = index;
 		this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB_OUTLINE).forEach((leaf) => {
 			if (leaf.view instanceof EpubOutlineView) {
 				leaf.view.setCurrentChapter(index);

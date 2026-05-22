@@ -442,6 +442,12 @@ export class EpubPaginator {
 	};
 
 	private onTouchEnd = (e: TouchEvent): void => {
+		// 边缘手势留给 Obsidian 处理侧边栏，不翻页
+		if (this.touchInEdgeZone) {
+			this.touchInEdgeZone = false;
+			return;
+		}
+
 		const dx = e.changedTouches[0].clientX - this.touchStartX;
 		const dy = e.changedTouches[0].clientY - this.touchStartY;
 

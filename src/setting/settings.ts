@@ -14,6 +14,7 @@ export interface EpubPluginSettings {
 	columnGap: number;
 	transitionDuration: number;
 	mobileColumnThreshold: number;
+	outlineCollapsed: boolean;
 }
 
 /** 翻页冷却时间（毫秒），防止滚轮/按键快速连续翻页 */
@@ -29,6 +30,7 @@ export const DEFAULT_SETTINGS: EpubPluginSettings = {
 	columnGap: 40,
 	transitionDuration: 350,
 	mobileColumnThreshold: 600,
+	outlineCollapsed: true,
 }
 
 

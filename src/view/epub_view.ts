@@ -92,6 +92,7 @@ export class EpubView extends FileView {
 	private handle: EpubHandle | null = null;
 	private textProcessor: TextProcessor | null = null;
 	private currentChapter = 0;
+	private tocData: TocItem[] = [];
 	private contentArea: HTMLElement | null = null;
 	private paginator: EpubPaginator | null = null;
 	private actionsAdded = false;
@@ -342,7 +343,8 @@ export class EpubView extends FileView {
 					children: item.children ? transform(item.children) : [],
 				}));
 
-			this.onTocReady?.(transform(rawToc));
+			this.tocData = transform(rawToc);
+			this.onTocReady?.(this.tocData);
 		} catch {
 			// Ignore TOC errors
 		}
@@ -363,6 +365,19 @@ export class EpubView extends FileView {
 			return `第 ${this.currentChapter + 1} / ${total} 章 — ${page.current + 1} / ${page.total} 页`;
 		}
 		return `第 ${this.currentChapter + 1} / ${total} 章`;
+	}
+
+	getTocData(): TocItem[] {
+		return this.tocData;
+	}
+
+	getCurrentChapter(): number {
+		return this.currentChapter;
+	}
+
+	navigateToChapter(index: number): void {
+		const delta = index - this.currentChapter;
+		if (delta !== 0) this.navigateChapter(delta);
 	}
 
 	private navigateChapter(delta: number): void {

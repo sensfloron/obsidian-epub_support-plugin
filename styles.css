@@ -303,47 +303,191 @@
 
 /* === EPUB Outline View === */
 
+/* === Outline View (matches Obsidian native outline style) === */
+
 .epub-outline-container {
-    padding: 8px 0;
+    padding: 0;
     height: 100%;
     overflow-y: auto;
 }
 
-.epub-outline-empty {
-    padding: 16px;
+/* Search bar — sticky, hides on scroll-down, shows on scroll-up */
+.epub-outline-search-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-2, 4px);
+    padding: 0;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    transition: transform 0.2s ease;
+}
+
+.epub-outline-search-bar.hidden {
+    transform: translateY(-100%);
+}
+
+.epub-outline-search-btn {
+    flex-shrink: 0;
+}
+
+/* Replicate Obsidian's .search-input-container exactly */
+.epub-outline-search-input-container {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-2, 2px);
+    flex: 1;
+    visibility: hidden;
+    height: var(--input-height, 32px);
+    padding: 0 var(--size-4-2, 8px);
+    background-color: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--input-radius, var(--radius-s, 4px));
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.epub-outline-search-input-container.visible {
+    visibility: visible;
+}
+
+.epub-outline-search-input-container:focus-within {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.epub-outline-search-input-container input {
+    flex: 1;
+    height: 100%;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    -webkit-app-region: no-drag;
+}
+
+.epub-outline-search-input-container input::placeholder {
     color: var(--text-muted);
-    font-size: 0.85em;
+}
+
+/* Hide native webkit clear button, use Obsidian's .search-input-clear-button instead */
+.epub-outline-search-input-container input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.epub-outline-search-input-container .search-input-clear-button {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: var(--icon-l, 18px);
+    height: var(--icon-l, 18px);
+    cursor: pointer;
+    color: var(--icon-color, var(--text-muted));
+    border-radius: var(--clickable-icon-radius, var(--radius-s, 4px));
+}
+
+.epub-outline-search-input-container .search-input-clear-button:hover {
+    color: var(--icon-color-hover, var(--text-normal));
+    background-color: var(--background-modifier-hover);
+}
+
+.epub-outline-search-input-container .search-input-clear-button svg {
+    width: var(--icon-s, 14px);
+    height: var(--icon-s, 14px);
+}
+
+/* Show clear button only when input is non-empty */
+.epub-outline-search-input-container input:not(:placeholder-shown) ~ .search-input-clear-button {
+    display: flex;
+}
+
+.epub-outline-empty {
+    padding: var(--size-4-4, 16px);
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
     text-align: center;
 }
 
-.epub-outline-list,
-.epub-outline-sublist {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
-
+/* Tree structure: depth-based indentation */
 .epub-outline-item {
-    margin: 0;
+    --epub-outline-depth: 0;
 }
 
-.epub-outline-link {
-    display: block;
-    padding: 6px 16px;
-    font-size: 0.9em;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-radius: 0;
+.epub-outline-item[data-chapter] > .epub-outline-item-self {
+    padding-left: calc(
+        var(--nav-item-padding-left, var(--size-4-3, 12px)) +
+        var(--epub-outline-depth, 0) *
+            var(--nav-item-children-padding-left, var(--size-4-4, 16px))
+    );
+}
+
+/* Toggle arrow */
+.epub-outline-toggle {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: var(--size-2-1, 2px);
+    color: var(--collapse-icon-color, var(--text-faint));
+    transition: transform 0.15s ease;
+}
+
+.epub-outline-toggle svg {
+    width: 14px;
+    height: 14px;
+}
+
+.epub-outline-item:not(.collapsed) > .epub-outline-item-self .epub-outline-toggle {
+    transform: rotate(90deg);
+}
+
+.epub-outline-item.collapsed > .epub-outline-children {
+    display: none;
+}
+
+/* Item row: mirrors Obsidian .tree-item-self */
+.epub-outline-item-self {
+    display: flex;
+    align-items: center;
+    padding: var(--nav-item-padding, var(--size-4-2, 4px) var(--size-4-3, 12px));
+    padding-left: calc(
+        var(--nav-item-padding-left, var(--size-4-3, 12px)) +
+        var(--epub-outline-depth, 0) *
+            var(--nav-item-children-padding-left, var(--size-4-4, 16px))
+    );
+    padding-right: var(--nav-item-padding-right, var(--size-4-3, 12px));
+    margin: var(--nav-item-margin, 0);
+    border-radius: var(--nav-item-radius, var(--radius-s, 4px));
+    color: var(--nav-item-color, var(--text-muted));
+    font-size: var(--nav-item-size, var(--font-ui-small));
+    font-weight: var(--nav-item-weight);
+    line-height: var(--line-height-tight);
     cursor: pointer;
+    user-select: none;
     white-space: nowrap;
+}
+
+.epub-outline-item-self:hover {
+    background-color: var(--nav-item-background-hover, var(--background-modifier-hover));
+    color: var(--nav-item-color-hover, var(--text-normal));
+    font-weight: var(--nav-item-weight-hover, var(--nav-item-weight));
+}
+
+.epub-outline-item-self.is-active {
+    background-color: var(--nav-item-background-active, var(--text-accent));
+    color: var(--nav-item-color-active, var(--text-on-accent));
+    font-weight: var(--nav-item-weight-active, var(--font-semibold));
+}
+
+.epub-outline-inner {
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: background 0.1s ease, color 0.1s ease;
-}
-
-.epub-outline-link:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
+    flex: 1;
 }
 
 /* === Immersive Reading Mode ===
@@ -361,10 +505,4 @@ body.epub-immersive .mobile-toolbar {
 
 body.epub-immersive .epub-paginated-viewport {
 	height: 100vh;
-}
-
-.epub-outline-link.active {
-    background: var(--text-accent);
-    color: var(--text-on-accent);
-    font-weight: 500;
 }
