@@ -4,6 +4,7 @@ import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/
 import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
 import { EpubProgress, ProgressStore } from "../lib/progress_store";
+import { TocItem } from "./epub_outline_view";
 
 export const EPUB_FILE_EXTENSION = "epub";
 export const VIEW_TYPE_EPUB = "epub";
@@ -118,6 +119,8 @@ export class EpubView extends FileView {
 
 	onPositionChange: ((label: string) => void) | null = null;
 	onProgressSave: (() => void) | null = null;
+	onTocReady: ((toc: TocItem[]) => void) | null = null;
+	onChapterChange: ((index: number) => void) | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -145,6 +148,8 @@ export class EpubView extends FileView {
 		this.handle = new EpubHandle(epubData);
 		this.textProcessor = new TextProcessor();
 		this.currentChapter = 0;
+
+		this.buildAndPublishToc();
 
 		this.addViewActions();
 		this.ensureFootnoteInfrastructure();
@@ -200,6 +205,7 @@ export class EpubView extends FileView {
 		this.observeContentChanges();
 		this.highlightCodeBlocks();
 		this.notifyPositionChange();
+		this.onChapterChange?.(this.currentChapter);
 		this.registerKeyboard();
 		this.registerSelectionEvents();
 		}
@@ -299,6 +305,44 @@ export class EpubView extends FileView {
 		}
 	}
 
+	private buildAndPublishToc(): void {
+		if (!this.handle) return;
+		try {
+			const rawToc = this.handle.get_toc() as { label: string; href: string; children: never[] }[];
+			if (!rawToc || rawToc.length === 0) return;
+
+			// Build href → chapter index map from spine paths
+			const hrefToIndex = new Map<string, number>();
+			const total = this.handle.total_chapters();
+			for (let i = 0; i < total; i++) {
+				const path = this.handle.get_spine_item_path(i);
+				if (path) hrefToIndex.set(path, i);
+			}
+
+			const resolveIndex = (href: string): number => {
+				const clean = href.split("#")[0];
+				const match = hrefToIndex.get(clean);
+				if (match !== undefined) return match;
+				for (const [p, idx] of hrefToIndex) {
+					if (p.endsWith(clean) || clean.endsWith(p)) return idx;
+				}
+				return 0;
+			};
+
+			const transform = (items: typeof rawToc): TocItem[] =>
+				items.map((item) => ({
+					label: item.label,
+					href: item.href,
+					chapterIndex: resolveIndex(item.href),
+					children: item.children ? transform(item.children) : [],
+				}));
+
+			this.onTocReady?.(transform(rawToc));
+		} catch {
+			// Ignore TOC errors
+		}
+	}
+
 	private notifyPositionChange(): void {
 		if (this.onPositionChange) {
 			this.onPositionChange(this.getPositionLabel());
@@ -332,6 +376,7 @@ export class EpubView extends FileView {
 		}
 		this.enhanceFootnoteRefs();
 		this.notifyPositionChange();
+		this.onChapterChange?.(this.currentChapter);
 		this.flashSaveProgress();
 	}
 

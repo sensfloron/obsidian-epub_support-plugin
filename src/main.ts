@@ -1,6 +1,7 @@
 import { addIcon, Plugin, WorkspaceLeaf } from 'obsidian';
 import { EpubSettingTab, EpubPluginSettings, DEFAULT_SETTINGS } from 'setting/settings'
 import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/epub_view'
+import { EpubOutlineView, VIEW_TYPE_EPUB_OUTLINE, TocItem } from 'view/epub_outline_view'
 import { ProgressStore, PROGRESSES_KEY } from 'lib/progress_store'
 
 export default class EpubSupportPlugin extends Plugin {
@@ -28,8 +29,16 @@ export default class EpubSupportPlugin extends Plugin {
 				this.statusBarItemEl.setText(label);
 			};
 			view.onProgressSave = () => this.saveProgressData();
+			view.onTocReady = (toc: TocItem[]) => this.updateOutline(toc);
+			view.onChapterChange = (index: number) => this.updateOutlineChapter(index);
 			return view;
 		});
+
+		this.registerView(VIEW_TYPE_EPUB_OUTLINE, (leaf: WorkspaceLeaf) => {
+			return new EpubOutlineView(leaf);
+		});
+
+		this.addRibbonIcon("list", "EPUB 目录", () => this.activateOutline());
 
 		try {
 			this.registerExtensions([EPUB_FILE_EXTENSION], VIEW_TYPE_EPUB);
@@ -56,6 +65,33 @@ export default class EpubSupportPlugin extends Plugin {
 			this.statusBarItemEl.setText(view.getPositionLabel());
 		} else {
 			this.statusBarItemEl.setText('');
+		}
+	}
+
+	private updateOutline(toc: TocItem[]): void {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB_OUTLINE).forEach((leaf) => {
+			if (leaf.view instanceof EpubOutlineView) {
+				leaf.view.setToc(toc);
+			}
+		});
+	}
+
+	private updateOutlineChapter(index: number): void {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB_OUTLINE).forEach((leaf) => {
+			if (leaf.view instanceof EpubOutlineView) {
+				leaf.view.setCurrentChapter(index);
+			}
+		});
+	}
+
+	private async activateOutline(): Promise<void> {
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB_OUTLINE);
+		if (leaves.length > 0) {
+			this.app.workspace.revealLeaf(leaves[0]);
+		} else {
+			const leaf = this.app.workspace.getRightLeaf(false);
+			if (leaf) await leaf.setViewState({ type: VIEW_TYPE_EPUB_OUTLINE, active: true });
+			this.app.workspace.revealLeaf(leaf!);
 		}
 	}
 
