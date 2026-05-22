@@ -350,19 +350,14 @@
    Animation timing follows Obsidian design tokens for consistent feel. */
 
 body.epub-immersive .view-header,
-body.epub-immersive .status-bar {
+body.epub-immersive .status-bar,
+body.epub-immersive .mobile-navbar,
+body.epub-immersive .mobile-toolbar {
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity var(--anim-duration-fast, 150ms) var(--anim-motion-smooth, ease);
 }
 
-body.epub-immersive .workspace-ribbon,
-body.epub-immersive .side-dock-ribbon,
-body.epub-immersive .mobile-navbar,
-body.epub-immersive .mobile-toolbar,
-body.epub-immersive .workspace-drawer {
-	display: none !important;
-}
 
 body.epub-immersive .epub-paginated-viewport {
 	height: 100vh;
