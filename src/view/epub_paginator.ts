@@ -17,6 +17,10 @@ export class EpubPaginator {
 	private touchStartY = 0;
 	private swipeThreshold = 50;
 	private lastWheelTime = 0;
+	private lastTapTime = 0;
+	private clickZoneHandler: ((e: MouseEvent) => void) | null = null;
+	private swipeHandled = false;
+	private touchInEdgeZone = false;
 
 	private settings: EpubPluginSettings;
 	private onPageChangeCallback: ((current: number, total: number) => void) | null = null;
@@ -197,9 +201,15 @@ export class EpubPaginator {
 		this.pageHeight = rect.height || 600;
 	}
 
+	private resolveColumnCount(): number {
+		// 视口宽度低于阈值时强制单页，适合手机竖屏阅读
+		if (this.pageWidth < this.settings.mobileColumnThreshold) return 1;
+		return this.settings.columnCount;
+	}
+
 	private applyTrackStyles(animate: boolean): void {
 		if (!this.trackEl) return;
-		const count = this.settings.columnCount;
+		const count = this.resolveColumnCount();
 		const gap = this.settings.columnGap;
 		const dur = this.settings.transitionDuration;
 		const totalGap = gap * (count - 1);
@@ -318,8 +328,17 @@ export class EpubPaginator {
 
 	private bindEvents(): void {
 		if (!this.viewportEl) return;
-		this.viewportEl.addEventListener("touchstart", this.onTouchStart, { passive: true });
-		this.viewportEl.addEventListener("touchend", this.onTouchEnd, { passive: true });
+		const mode = this.settings.pageTurnMode;
+
+		if (mode === 'swipe' || mode === 'both') {
+			this.viewportEl.addEventListener("touchstart", this.onTouchStart, { passive: true });
+			this.viewportEl.addEventListener("touchend", this.onTouchEnd, { passive: true });
+			this.viewportEl.addEventListener("touchmove", this.onTouchMove, { passive: false });
+		}
+		if (mode === 'tap' || mode === 'both') {
+			this.bindClickZones();
+		}
+
 		this.viewportEl.addEventListener("wheel", this.onWheel, { passive: false });
 
 		this.resizeObserver = new ResizeObserver(() => this.onResize());
@@ -330,15 +349,56 @@ export class EpubPaginator {
 		if (this.viewportEl) {
 			this.viewportEl.removeEventListener("touchstart", this.onTouchStart);
 			this.viewportEl.removeEventListener("touchend", this.onTouchEnd);
+			this.viewportEl.removeEventListener("touchmove", this.onTouchMove);
 			this.viewportEl.removeEventListener("wheel", this.onWheel);
+			this.unbindClickZones();
 		}
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 	}
 
+	private bindClickZones(): void {
+		if (!this.viewportEl) return;
+		this.clickZoneHandler = (e: MouseEvent) => {
+			if (this.isTransitioning) return;
+			if (this.swipeHandled) {
+				this.swipeHandled = false;
+				return;
+			}
+			const now = Date.now();
+			if (now - this.lastTapTime < PAGE_TURN_COOLDOWN_MS) return;
+			// 忽略文本选择拖拽后的 click
+			const selection = window.getSelection();
+			if (selection && !selection.isCollapsed) return;
+
+			const rect = this.viewportEl!.getBoundingClientRect();
+			const relX = e.clientX - rect.left;
+			const third = rect.width / 3;
+
+			if (relX < third) {
+				this.lastTapTime = now;
+				this.navigatePage(-1);
+			} else if (relX > third * 2) {
+				this.lastTapTime = now;
+				this.navigatePage(1);
+			}
+		};
+		this.viewportEl.addEventListener("click", this.clickZoneHandler);
+	}
+
+	private unbindClickZones(): void {
+		if (this.viewportEl && this.clickZoneHandler) {
+			this.viewportEl.removeEventListener("click", this.clickZoneHandler);
+			this.clickZoneHandler = null;
+		}
+	}
+
 	private onTouchStart = (e: TouchEvent): void => {
 		this.touchStartX = e.touches[0].clientX;
 		this.touchStartY = e.touches[0].clientY;
+		const edgeW = 24;
+		this.touchInEdgeZone =
+			this.touchStartX < edgeW || this.touchStartX > window.innerWidth - edgeW;
 	};
 
 	private onWheel = (e: WheelEvent): void => {
@@ -366,14 +426,23 @@ export class EpubPaginator {
 		}
 	};
 
+	private onTouchMove = (e: TouchEvent): void => {
+		if (!this.touchInEdgeZone) {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	};
+
 	private onTouchEnd = (e: TouchEvent): void => {
 		const dx = e.changedTouches[0].clientX - this.touchStartX;
 		const dy = e.changedTouches[0].clientY - this.touchStartY;
 
 		if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > this.swipeThreshold) {
+			this.swipeHandled = true;
 			if (dx < 0) this.navigatePage(1);    // 左滑 = 下一页
 			else this.navigatePage(-1);            // 右滑 = 上一页
 		}
+		this.touchInEdgeZone = false;
 	};
 
 	private onResize = (): void => {

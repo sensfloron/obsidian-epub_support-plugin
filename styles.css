@@ -8,7 +8,8 @@
     background: var(--background-primary);
     user-select: text;
     -webkit-user-select: text;
-    touch-action: pan-y;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .epub-paginated-track {
@@ -233,4 +234,69 @@
 .epub-selection-bar button.copy-btn:hover {
     background: var(--text-accent);
     color: var(--text-on-accent);
+}
+
+/* === Image Viewer === */
+
+.epub-image-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.88);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    touch-action: none;
+}
+
+.epub-image-overlay {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.epub-image-overlay img {
+    display: block;
+    max-width: 96vw;
+    max-height: 96vh;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: auto;
+    transition: transform 0.15s ease;
+    cursor: grab;
+}
+
+.epub-image-overlay img.grabbing {
+    cursor: grabbing;
+    transition: none;
+}
+
+.epub-image-close-btn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 202;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border: none;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease;
+}
+
+.epub-image-close-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
 }

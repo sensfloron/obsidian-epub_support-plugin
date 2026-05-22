@@ -2,15 +2,18 @@ import { App, PluginSettingTab, Setting } from 'obsidian';
 import EpubSupportPlugin from '../main'
 
 export type ViewMode = 'paginated' | 'scrolled';
+export type PageTurnMode = 'swipe' | 'tap' | 'both';
 
 export interface EpubPluginSettings {
 	viewMode: ViewMode;
+	pageTurnMode: PageTurnMode;
 	notePath: string;
 	useSameFolder: boolean;
 	tags: string;
 	columnCount: number;
 	columnGap: number;
 	transitionDuration: number;
+	mobileColumnThreshold: number;
 }
 
 /** 翻页冷却时间（毫秒），防止滚轮/按键快速连续翻页 */
@@ -18,12 +21,14 @@ export const PAGE_TURN_COOLDOWN_MS = 550;
 
 export const DEFAULT_SETTINGS: EpubPluginSettings = {
 	viewMode: 'paginated',
+	pageTurnMode: 'both',
 	notePath: '/',
 	useSameFolder: true,
 	tags: 'notes/booknotes',
 	columnCount: 2,
 	columnGap: 40,
 	transitionDuration: 350,
+	mobileColumnThreshold: 600,
 }
 
 
@@ -50,6 +55,19 @@ export class EpubSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.viewMode)
 				.onChange(async (value) => {
 					this.plugin.settings.viewMode = value as ViewMode;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('翻页方式')
+			.setDesc('滑动：通过滑动手势翻页；点击：点击屏幕左右侧翻页；两者：同时启用滑动与点击')
+			.addDropdown(dropdown => dropdown
+				.addOption('both', '两者')
+				.addOption('swipe', '滑动')
+				.addOption('tap', '点击')
+				.setValue(this.plugin.settings.pageTurnMode)
+				.onChange(async (value) => {
+					this.plugin.settings.pageTurnMode = value as PageTurnMode;
 					await this.plugin.saveSettings();
 				}));
 
@@ -90,7 +108,19 @@ export class EpubSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('笔记存储路径')
+			.setName('单页栏数阈值')
+				.setDesc('视口宽度低于此值（像素）时自动切换为单页模式，适合手机竖屏阅读')
+				.addSlider(slider => slider
+					.setLimits(300, 1024, 25)
+					.setValue(this.plugin.settings.mobileColumnThreshold)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.mobileColumnThreshold = value;
+						await this.plugin.saveSettings();
+					}));
+
+			new Setting(containerEl)
+				.setName('笔记存储路径')
 			.setDesc('阅读笔记和标注的保存位置')
 			.addText(text => text
 				.setPlaceholder('/')

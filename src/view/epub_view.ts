@@ -96,6 +96,21 @@ export class EpubView extends FileView {
 	private actionsAdded = false;
 	private footnotePopover: HTMLElement | null = null;
 	private footnoteBackdrop: HTMLElement | null = null;
+	private imageViewerBackdrop: HTMLElement | null = null;
+	private imageViewerOverlay: HTMLElement | null = null;
+	private imageViewerImg: HTMLImageElement | null = null;
+	private imageViewerCloseBtn: HTMLElement | null = null;
+	private imageViewerScale = 1;
+	private imageViewerPanX = 0;
+	private imageViewerPanY = 0;
+	private imageViewerPanning = false;
+	private imageViewerPanStartX = 0;
+	private imageViewerPanStartY = 0;
+	private imageViewerPanOrigX = 0;
+	private imageViewerPanOrigY = 0;
+	private imageViewerPinchStartDist = 0;
+	private imageViewerPinchStartScale = 1;
+	private imageViewerTouchInEdgeZone = false;
 	private fnObserver: MutationObserver | null = null;
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastKeyTime = 0;
@@ -369,6 +384,7 @@ export class EpubView extends FileView {
 		this.fnObserver?.disconnect();
 		this.fnObserver = null;
 		if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+		document.body.style.overflow = "";
 		// Save final progress before unloading
 		this.saveCurrentProgress();
 		this.onProgressSave?.();
@@ -511,6 +527,23 @@ export class EpubView extends FileView {
 			return;
 		}
 
+		// 图片查看器内的点击不处理
+		if (target.closest(".epub-image-overlay")) {
+			return;
+		}
+
+		// 正文图片 → 打开图片查看器
+		const contentImg = target.closest(
+			"img:not(.fn-img):not(.qqreader-footnote):not(.duokan-footnote):not([class*='footnote'])"
+		) as HTMLImageElement | null;
+		if (contentImg) {
+			evt.preventDefault();
+			evt.stopPropagation();
+			this.ensureImageViewerInfrastructure();
+			this.showImageViewer(contentImg);
+			return;
+		}
+
 		const fnImg = target.closest(
 			"img.fn-img, img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
 		) as HTMLImageElement | null;
@@ -607,6 +640,227 @@ export class EpubView extends FileView {
 		this.footnotePopover?.hide();
 		this.footnoteBackdrop?.hide();
 	}
+
+	// ── Image viewer ──
+
+	private ensureImageViewerInfrastructure(): void {
+		if (this.imageViewerBackdrop) return;
+
+		this.imageViewerBackdrop = this.contentEl.createDiv("epub-image-backdrop");
+		this.imageViewerBackdrop.hide();
+
+		this.imageViewerOverlay = this.imageViewerBackdrop.createDiv("epub-image-overlay");
+		this.imageViewerImg = this.imageViewerOverlay.createEl("img");
+
+		this.imageViewerCloseBtn = this.contentEl.createEl("button", { cls: "epub-image-close-btn" });
+		this.imageViewerCloseBtn.setText("×");
+		this.imageViewerCloseBtn.hide();
+
+		// 屏蔽 Obsidian 移动端非边缘手势：
+		// - 边缘区域（左右各 24px）放行，保留侧边栏边缘滑动
+		// - 图片区域由 img 自身 handler 处理（缩放/拖拽）
+		// - 其余区域屏蔽（阻止任意位置触发侧边栏和命令面板）
+		this.imageViewerBackdrop.addEventListener("touchstart", (e) => {
+			const edgeW = 24;
+			const touchX = e.touches[0]?.clientX ?? 0;
+			this.imageViewerTouchInEdgeZone =
+				touchX < edgeW || touchX > window.innerWidth - edgeW;
+			if (!this.imageViewerTouchInEdgeZone) {
+				e.stopPropagation();
+			}
+		}, { passive: true });
+		this.imageViewerBackdrop.addEventListener("touchmove", (e) => {
+			if (!this.imageViewerTouchInEdgeZone) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		}, { passive: false });
+		this.imageViewerBackdrop.addEventListener("touchend", () => {
+			this.imageViewerTouchInEdgeZone = false;
+		});
+
+		// 点击背景关闭
+		this.imageViewerBackdrop.addEventListener("click", (e) => {
+			if (e.target === this.imageViewerBackdrop) this.hideImageViewer();
+		});
+
+		// 关闭按钮
+		this.imageViewerCloseBtn.addEventListener("click", () => this.hideImageViewer());
+
+		// Escape 关闭
+		this.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
+			if (e.key === "Escape" && this.imageViewerBackdrop && !this.imageViewerBackdrop.hidden) {
+				this.hideImageViewer();
+			}
+		});
+
+		// 滚轮缩放
+		this.imageViewerOverlay.addEventListener("wheel", this.onImageViewerWheel, { passive: false });
+
+		// 鼠标拖拽平移
+		this.imageViewerImg.addEventListener("mousedown", this.onImageViewerMouseDown);
+		this.registerDomEvent(document, "mousemove", this.onImageViewerMouseMove);
+		this.registerDomEvent(document, "mouseup", this.onImageViewerMouseUp);
+
+		// 双击切换缩放
+		this.imageViewerImg.addEventListener("dblclick", this.onImageViewerDblClick);
+
+		// 触摸事件（pinch 缩放 + 单指平移）
+		this.imageViewerImg.addEventListener("touchstart", this.onImageViewerTouchStart, { passive: false });
+		this.imageViewerImg.addEventListener("touchmove", this.onImageViewerTouchMove, { passive: false });
+		this.imageViewerImg.addEventListener("touchend", this.onImageViewerTouchEnd);
+	}
+
+	private showImageViewer(img: HTMLImageElement): void {
+		if (!this.imageViewerBackdrop || !this.imageViewerImg || !this.imageViewerCloseBtn) return;
+
+		this.imageViewerImg.src = img.src;
+		this.imageViewerScale = 1;
+		this.imageViewerPanX = 0;
+		this.imageViewerPanY = 0;
+		this.applyImageViewerTransform();
+
+		this.imageViewerBackdrop.show();
+		this.imageViewerCloseBtn.show();
+		// 禁止 body 滚动
+		document.body.style.overflow = "hidden";
+	}
+
+	private hideImageViewer(): void {
+		this.imageViewerBackdrop?.hide();
+		this.imageViewerCloseBtn?.hide();
+		this.imageViewerPanning = false;
+		document.body.style.overflow = "";
+	}
+
+	private applyImageViewerTransform(): void {
+		if (!this.imageViewerImg) return;
+		const tx = this.imageViewerPanX;
+		const ty = this.imageViewerPanY;
+		const s = this.imageViewerScale;
+		this.imageViewerImg.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+	}
+
+	private clampPan(): void {
+		// 缩放为 1 时不需平移（复位）
+		if (this.imageViewerScale <= 1) {
+			this.imageViewerPanX = 0;
+			this.imageViewerPanY = 0;
+			return;
+		}
+		// 限制平移范围避免图片完全拖出视野
+		const s = this.imageViewerScale;
+		const maxD = 200 * (s - 1); // 缩放越大允许拖越远
+		this.imageViewerPanX = Math.max(-maxD, Math.min(maxD, this.imageViewerPanX));
+		this.imageViewerPanY = Math.max(-maxD, Math.min(maxD, this.imageViewerPanY));
+	}
+
+	// 滚轮缩放
+	private onImageViewerWheel = (e: WheelEvent): void => {
+		e.preventDefault();
+		const delta = -e.deltaY * 0.005;
+		const prev = this.imageViewerScale;
+		this.imageViewerScale = Math.max(0.5, Math.min(5, this.imageViewerScale * (1 + delta)));
+		// 以鼠标位置为中心缩放（近似）
+		if (this.imageViewerScale !== prev && this.imageViewerScale > 1 && this.imageViewerImg) {
+			const rect = this.imageViewerImg.getBoundingClientRect();
+			const cx = e.clientX - rect.left;
+			const cy = e.clientY - rect.top;
+			const factor = this.imageViewerScale / prev - 1;
+			this.imageViewerPanX -= cx * factor;
+			this.imageViewerPanY -= cy * factor;
+		}
+		if (this.imageViewerScale <= 1) {
+			this.imageViewerPanX = 0;
+			this.imageViewerPanY = 0;
+		}
+		this.clampPan();
+		this.applyImageViewerTransform();
+	};
+
+	// 鼠标拖拽平移
+	private onImageViewerMouseDown = (e: MouseEvent): void => {
+		if (this.imageViewerScale <= 1) return;
+		e.preventDefault();
+		this.imageViewerPanning = true;
+		this.imageViewerPanStartX = e.clientX;
+		this.imageViewerPanStartY = e.clientY;
+		this.imageViewerPanOrigX = this.imageViewerPanX;
+		this.imageViewerPanOrigY = this.imageViewerPanY;
+		this.imageViewerImg?.addClass("grabbing");
+	};
+
+	private onImageViewerMouseMove = (e: MouseEvent): void => {
+		if (!this.imageViewerPanning) return;
+		this.imageViewerPanX = this.imageViewerPanOrigX + (e.clientX - this.imageViewerPanStartX);
+		this.imageViewerPanY = this.imageViewerPanOrigY + (e.clientY - this.imageViewerPanStartY);
+		this.clampPan();
+		this.applyImageViewerTransform();
+	};
+
+	private onImageViewerMouseUp = (): void => {
+		this.imageViewerPanning = false;
+		this.imageViewerImg?.removeClass("grabbing");
+	};
+
+	// 双击切换 1x ↔ 2x
+	private onImageViewerDblClick = (e: MouseEvent): void => {
+		e.preventDefault();
+		if (this.imageViewerScale > 1.1) {
+			this.imageViewerScale = 1;
+			this.imageViewerPanX = 0;
+			this.imageViewerPanY = 0;
+		} else {
+			this.imageViewerScale = 2;
+			this.imageViewerPanX = 0;
+			this.imageViewerPanY = 0;
+		}
+		this.applyImageViewerTransform();
+	};
+
+	// 触摸 pinch 缩放
+	private onImageViewerTouchStart = (e: TouchEvent): void => {
+		if (e.touches.length === 2) {
+			e.preventDefault();
+			const dx = e.touches[0].clientX - e.touches[1].clientX;
+			const dy = e.touches[0].clientY - e.touches[1].clientY;
+			this.imageViewerPinchStartDist = Math.hypot(dx, dy);
+			this.imageViewerPinchStartScale = this.imageViewerScale;
+		} else if (e.touches.length === 1 && this.imageViewerScale > 1) {
+			this.imageViewerPanning = true;
+			this.imageViewerPanStartX = e.touches[0].clientX;
+			this.imageViewerPanStartY = e.touches[0].clientY;
+			this.imageViewerPanOrigX = this.imageViewerPanX;
+			this.imageViewerPanOrigY = this.imageViewerPanY;
+		}
+	};
+
+	private onImageViewerTouchMove = (e: TouchEvent): void => {
+		if (e.touches.length === 2 && this.imageViewerPinchStartDist > 0) {
+			e.preventDefault();
+			const dx = e.touches[0].clientX - e.touches[1].clientX;
+			const dy = e.touches[0].clientY - e.touches[1].clientY;
+			const dist = Math.hypot(dx, dy);
+			this.imageViewerScale = Math.max(0.5, Math.min(5,
+				this.imageViewerPinchStartScale * (dist / this.imageViewerPinchStartDist)
+			));
+			if (this.imageViewerScale <= 1) {
+				this.imageViewerPanX = 0;
+				this.imageViewerPanY = 0;
+			}
+			this.applyImageViewerTransform();
+		} else if (e.touches.length === 1 && this.imageViewerPanning) {
+			this.imageViewerPanX = this.imageViewerPanOrigX + (e.touches[0].clientX - this.imageViewerPanStartX);
+			this.imageViewerPanY = this.imageViewerPanOrigY + (e.touches[0].clientY - this.imageViewerPanStartY);
+			this.clampPan();
+			this.applyImageViewerTransform();
+		}
+	};
+
+	private onImageViewerTouchEnd = (_e: TouchEvent): void => {
+		this.imageViewerPanning = false;
+		this.imageViewerPinchStartDist = 0;
+	};
 
 	// ── Selection support ──
 
