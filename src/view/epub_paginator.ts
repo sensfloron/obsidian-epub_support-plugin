@@ -21,8 +21,6 @@ export class EpubPaginator {
 	private clickZoneHandler: ((e: MouseEvent) => void) | null = null;
 	private swipeHandled = false;
 	private touchInEdgeZone = false;
-	private touchIsLongPress = false;
-	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
 
 	private settings: EpubPluginSettings;
 	private onPageChangeCallback: ((current: number, total: number) => void) | null = null;
@@ -367,11 +365,6 @@ export class EpubPaginator {
 				this.swipeHandled = false;
 				return;
 			}
-			// 长按选择后的 click 不翻页（消费标记）
-			if (this.touchIsLongPress) {
-				this.touchIsLongPress = false;
-				return;
-			}
 			const now = Date.now();
 			if (now - this.lastTapTime < PAGE_TURN_COOLDOWN_MS) return;
 			// 忽略文本选择拖拽后的 click
@@ -403,15 +396,9 @@ export class EpubPaginator {
 	private onTouchStart = (e: TouchEvent): void => {
 		this.touchStartX = e.touches[0].clientX;
 		this.touchStartY = e.touches[0].clientY;
-		this.touchIsLongPress = false;
 		const edgeW = 24;
 		this.touchInEdgeZone =
 			this.touchStartX < edgeW || this.touchStartX > window.innerWidth - edgeW;
-		// 长按检测：超时后标记为文本选择手势，后续 touchmove 放行
-		if (this.longPressTimer) clearTimeout(this.longPressTimer);
-		this.longPressTimer = setTimeout(() => {
-			this.touchIsLongPress = true;
-		}, 400);
 	};
 
 	private onWheel = (e: WheelEvent): void => {
@@ -440,24 +427,13 @@ export class EpubPaginator {
 	};
 
 	private onTouchMove = (e: TouchEvent): void => {
-		if (this.touchInEdgeZone) return;
-		// 长按后的拖动 = 扩展文本选择，完全放行
-		if (this.touchIsLongPress) return;
-		// 只有明显滑动才拦截——用翻页阈值，给长按选择留出足够容差
-		const dx = e.touches[0].clientX - this.touchStartX;
-		const dy = e.touches[0].clientY - this.touchStartY;
-		if (Math.abs(dx) > this.swipeThreshold || Math.abs(dy) > this.swipeThreshold) {
+		if (!this.touchInEdgeZone) {
 			e.preventDefault();
 			e.stopPropagation();
 		}
 	};
 
 	private onTouchEnd = (e: TouchEvent): void => {
-		if (this.longPressTimer) {
-			clearTimeout(this.longPressTimer);
-			this.longPressTimer = null;
-		}
-
 		const dx = e.changedTouches[0].clientX - this.touchStartX;
 		const dy = e.changedTouches[0].clientY - this.touchStartY;
 
@@ -467,8 +443,6 @@ export class EpubPaginator {
 			else this.navigatePage(-1);            // 右滑 = 上一页
 		}
 		this.touchInEdgeZone = false;
-		// touchIsLongPress 不在此清零——click 事件在 touchend 之后才触发，
-		// 需要在 click handler 中消费掉，避免长按松手时误翻页
 	};
 
 	private onResize = (): void => {
