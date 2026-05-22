@@ -176,6 +176,9 @@ export class EpubView extends FileView {
 			this.paginator?.destroy();
 			this.paginator = new EpubPaginator(this.settings);
 			this.paginator.onChapterBoundary = (dir) => this.navigateChapter(dir);
+		this.paginator.onCenterTap = () => {
+			document.body.classList.toggle("epub-immersive");
+		};
 			this.paginator.setOnPageChange(() => {
 				this.notifyPositionChange();
 				this.debounceSaveProgress();
@@ -429,6 +432,7 @@ export class EpubView extends FileView {
 		this.fnObserver?.disconnect();
 		this.fnObserver = null;
 		if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+		document.body.classList.remove("epub-immersive");
 		document.body.style.overflow = "";
 		// Save final progress before unloading
 		this.saveCurrentProgress();

@@ -28,6 +28,9 @@ export class EpubPaginator {
 	/** 当用户翻页超出章节边界时触发。dir: -1（上一章）或 1（下一章） */
 	onChapterBoundary: ((direction: -1 | 1) => void) | null = null;
 
+	/** 点击/触控热区中间区域时触发，用于切换沉浸式阅读（显示/隐藏 UI） */
+	onCenterTap: (() => void) | null = null;
+
 	constructor(settings: EpubPluginSettings) {
 		this.settings = settings;
 	}
@@ -381,6 +384,9 @@ export class EpubPaginator {
 			} else if (relX > third * 2) {
 				this.lastTapTime = now;
 				this.navigatePage(1);
+			} else {
+				this.lastTapTime = now;
+				this.onCenterTap?.();
 			}
 		};
 		this.viewportEl.addEventListener("click", this.clickZoneHandler);
