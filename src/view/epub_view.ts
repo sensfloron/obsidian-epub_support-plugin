@@ -85,6 +85,7 @@ async function initNoteWasmOnce(readBinary: (path: string) => Promise<ArrayBuffe
 
 const SAVE_DEBOUNCE_MS = 300;
 
+
 export class EpubView extends FileView {
 	allowNoFile: false = false;
 	private handle: EpubHandle | null = null;
@@ -98,6 +99,7 @@ export class EpubView extends FileView {
 	private fnObserver: MutationObserver | null = null;
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastKeyTime = 0;
+	private selectionBar: HTMLElement | null = null;
 
 	onPositionChange: ((label: string) => void) | null = null;
 	onProgressSave: (() => void) | null = null;
@@ -184,7 +186,8 @@ export class EpubView extends FileView {
 		this.highlightCodeBlocks();
 		this.notifyPositionChange();
 		this.registerKeyboard();
-	}
+		this.registerSelectionEvents();
+		}
 
 	private saveCurrentProgress(): void {
 		if (!this.handle || !this.file) return;
@@ -603,5 +606,90 @@ export class EpubView extends FileView {
 	private hideFootnotePopover(): void {
 		this.footnotePopover?.hide();
 		this.footnoteBackdrop?.hide();
+	}
+
+	// ── Selection support ──
+
+	private registerSelectionEvents(): void {
+		this.registerDomEvent(document, 'mouseup', this.onSelectionMouseUp);
+		this.registerDomEvent(document, 'mousedown', this.onSelectionMouseDown);
+	}
+
+	private onSelectionMouseDown = (evt: MouseEvent): void => {
+		if (this.selectionBar && !this.selectionBar.contains(evt.target as Node)) {
+			this.hideSelectionBar();
+		}
+	};
+
+	private onSelectionMouseUp = (evt: MouseEvent): void => {
+		const { clientX, clientY } = evt;
+		setTimeout(() => {
+			const selection = window.getSelection();
+			if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+				this.hideSelectionBar();
+				return;
+			}
+
+			if (!selection.anchorNode || !this.contentEl.contains(selection.anchorNode)) {
+				this.hideSelectionBar();
+				return;
+			}
+
+			this.showSelectionBar(clientX, clientY);
+		}, 10);
+	};
+
+	private ensureSelectionBar(): void {
+		if (this.selectionBar) return;
+
+		this.selectionBar = this.contentEl.createDiv("epub-selection-bar");
+
+		const copyBtn = this.selectionBar.createEl("button", { cls: "copy-btn" });
+		copyBtn.setText("复制");
+		copyBtn.addEventListener("mousedown", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			navigator.clipboard.writeText(window.getSelection()?.toString() ?? "");
+			this.hideSelectionBar();
+			window.getSelection()?.removeAllRanges();
+		});
+	}
+
+	private showSelectionBar(clientX: number, clientY: number): void {
+		const FALLBACK_WIDTH = 120;
+		const FALLBACK_HEIGHT = 32;
+		const MARGIN = 8;
+		const GAP = 12;
+
+		this.ensureSelectionBar();
+		if (!this.selectionBar) return;
+
+		const barRect = this.selectionBar.getBoundingClientRect();
+		const barW = barRect.width || FALLBACK_WIDTH;
+		const barH = barRect.height || FALLBACK_HEIGHT;
+
+		let left = clientX - barW / 2;
+		let top = clientY - barH - GAP;
+
+		left = Math.max(MARGIN, Math.min(left, window.innerWidth - barW - MARGIN));
+
+		if (top < MARGIN) {
+			top = clientY + GAP;
+		}
+
+		if (top + barH > window.innerHeight - MARGIN) {
+			top = window.innerHeight - barH - MARGIN;
+		}
+
+		this.selectionBar.setCssProps({
+			position: "fixed",
+			left: `${left}px`,
+			top: `${top}px`,
+		});
+		this.selectionBar.addClass("visible");
+	}
+
+	private hideSelectionBar(): void {
+		this.selectionBar?.removeClass("visible");
 	}
 }

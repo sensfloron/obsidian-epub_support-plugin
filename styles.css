@@ -6,8 +6,8 @@
     position: relative;
     width: 100%;
     background: var(--background-primary);
-    user-select: none;
-    -webkit-user-select: none;
+    user-select: text;
+    -webkit-user-select: text;
     touch-action: pan-y;
 }
 
@@ -179,4 +179,58 @@
 
 .epub-footnote-popover .fn-backlink:hover {
     text-decoration: underline;
+}
+
+/* === Selection Action Bar === */
+
+.epub-selection-bar {
+    position: absolute;
+    z-index: 101;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 4px 6px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+}
+
+.epub-selection-bar.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.epub-selection-bar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.8em;
+    cursor: pointer;
+    white-space: nowrap;
+    gap: 4px;
+}
+
+.epub-selection-bar button:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.epub-selection-bar button.copy-btn {
+    color: var(--text-accent);
+}
+
+.epub-selection-bar button.copy-btn:hover {
+    background: var(--text-accent);
+    color: var(--text-on-accent);
 }

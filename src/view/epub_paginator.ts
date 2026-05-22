@@ -21,7 +21,7 @@ export class EpubPaginator {
 	private settings: EpubPluginSettings;
 	private onPageChangeCallback: ((current: number, total: number) => void) | null = null;
 
-	/** Fires when user tries to navigate past chapter boundary. dir: -1 (prev chapter) or 1 (next chapter) */
+	/** 当用户翻页超出章节边界时触发。dir: -1（上一章）或 1（下一章） */
 	onChapterBoundary: ((direction: -1 | 1) => void) | null = null;
 
 	constructor(settings: EpubPluginSettings) {
@@ -35,17 +35,17 @@ export class EpubPaginator {
 	}
 
 	/**
-	 * Load new chapter content. `direction`: 1 = next chapter (slide from right),
-	 * -1 = prev chapter (slide from left), 0 = no animation (initial load).
+	 * 加载新章节内容。`direction`: 1 = 下一章（从右侧滑入），
+	 * -1 = 上一章（从左侧滑入），0 = 无动画（初始加载）。
 	 */
 	loadChapter(html: string, direction: -1 | 0 | 1 = 0): void {
 		if (!this.viewportEl || !this.trackEl) return;
 
-		const track = this.trackEl; // capture ref for callbacks
+		const track = this.trackEl;
 		const dur = this.settings.transitionDuration;
 
 		this.clearTransitionTimeout();
-		this.isTransitioning = false;
+		this.isTransitioning = true;
 		this.measureViewport();
 
 		if (direction === 0) {
@@ -57,41 +57,56 @@ export class EpubPaginator {
 					this.totalPages = this.calculateTotalPages();
 					this.updateTransform(false);
 					this.updatePageIndicator();
+					this.isTransitioning = false;
 				});
 			});
 			return;
 		}
 
 		const pageW = this.pageWidth + this.settings.columnGap;
-		const exitX = direction === 1 ? -pageW : pageW;
+		const currentX = -this.currentPage * pageW;
+		const exitX = currentX + (direction === 1 ? -pageW : pageW);
 		const enterX = direction === 1 ? pageW : -pageW;
 
-		// Step 1: slide current content out
+		// 第一步：将当前内容滑出
 		this.applyTrackStyles(true);
 		track.style.transform = `translateX(${exitX}px)`;
 
 		setTimeout(() => {
-			// Step 2: swap content while off-screen
+			// 第二步：在屏幕外替换内容，同时计算页数
 			track.style.transition = 'none';
 			track.style.transform = `translateX(${enterX}px)`;
 			track.innerHTML = this.buildChapterHTML(html);
-			this.currentPage = 0;
-			void track.offsetHeight; // force reflow
 
-			// Step 3: slide new content in
+			// 在屏幕外计算总页数，以便滑入时直接定位到正确的页面
+			this.applyTrackStyles(false);
+			void track.offsetHeight; // 强制重排，让分列布局生效
+			this.totalPages = this.calculateTotalPages();
+
+			// 前进时定位到第一页，后退时定位到最后一页
+			this.currentPage = direction === -1
+				? Math.max(0, this.totalPages - 1)
+				: 0;
+
+			const targetX = -this.currentPage * pageW;
+			const startX = targetX + (direction === 1 ? pageW : -pageW);
+
+			// 设置动画样式并定位到屏幕外
+			this.applyTrackStyles(true);
+			track.style.transition = 'none';
+			track.style.transform = `translateX(${startX}px)`;
+			void track.offsetHeight; // 强制重排
+
+			// 第三步：将新内容滑入到正确的页面位置
 			track.style.transition = `transform ${dur}ms cubic-bezier(0.4, 0, 0.2, 1)`;
-			track.style.transform = 'translateX(0px)';
+			track.style.transform = `translateX(${targetX}px)`;
 
-			// Step 4: after entrance, set up column layout
+			// 第四步：动画结束后，固化布局
 			setTimeout(() => {
 				this.applyTrackStyles(false);
 				this.updateTransform(false);
-				requestAnimationFrame(() => {
-					requestAnimationFrame(() => {
-						this.totalPages = this.calculateTotalPages();
-						this.updatePageIndicator();
-					});
-				});
+				this.updatePageIndicator();
+				this.isTransitioning = false;
 			}, dur);
 		}, dur);
 	}
@@ -129,7 +144,7 @@ export class EpubPaginator {
 		return { current: this.currentPage, total: this.totalPages };
 	}
 
-	/** Get the data-si index of the first visible sentence element on the current page. */
+	/** 获取当前页第一个可见句子的 data-si 索引。 */
 	getFirstVisibleSentenceIndex(): number {
 		if (!this.trackEl || !this.pageWidth) return 0;
 
@@ -142,7 +157,7 @@ export class EpubPaginator {
 
 		for (const s of sentences) {
 			const rect = s.getBoundingClientRect();
-			// Sentence is at least partially visible
+			// 句子至少部分可见
 			if (rect.right > visibleLeft && rect.left < visibleLeft + this.pageWidth) {
 				const si = s.getAttribute('data-si');
 				if (si !== null) return parseInt(si, 10);
@@ -223,7 +238,7 @@ export class EpubPaginator {
 		}
 		this.pageIndicatorEl.setText(`${this.currentPage + 1} / ${this.totalPages}`);
 		this.pageIndicatorEl.addClass("visible");
-		// Auto-hide after 2s
+		// 2秒后自动隐藏
 		clearTimeout(this._indicatorTimeout);
 		this._indicatorTimeout = setTimeout(() => {
 			this.pageIndicatorEl?.removeClass("visible");
@@ -295,7 +310,7 @@ export class EpubPaginator {
 	    }
 	  }
 	</style>`;
-		// Override AFTER EPUB content so it wins the cascade
+		// 在 EPUB 内容之后注入，确保样式优先
 		return rawHtml + overrideStyle;
 	}
 
@@ -327,13 +342,13 @@ export class EpubPaginator {
 	};
 
 	private onWheel = (e: WheelEvent): void => {
-		// Only handle if not transitioning and cooldown has passed
+		// 仅在非过渡状态且冷却时间已过时处理
 		const now = Date.now();
 		if (this.isTransitioning) return;
 		if (now - this.lastWheelTime < PAGE_TURN_COOLDOWN_MS) return;
 
 		if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-			// Horizontal scroll: treat as page turn
+			// 水平滚动：视为翻页
 			this.lastWheelTime = now;
 			if (e.deltaX > 0) {
 				this.navigatePage(1);
@@ -341,7 +356,7 @@ export class EpubPaginator {
 				this.navigatePage(-1);
 			}
 		} else if (Math.abs(e.deltaY) > 10) {
-			// Vertical scroll: treat as page turn
+			// 垂直滚动：视为翻页
 			this.lastWheelTime = now;
 			if (e.deltaY > 0) {
 				this.navigatePage(1);
@@ -356,8 +371,8 @@ export class EpubPaginator {
 		const dy = e.changedTouches[0].clientY - this.touchStartY;
 
 		if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > this.swipeThreshold) {
-			if (dx < 0) this.navigatePage(1);    // swipe left = next page
-			else this.navigatePage(-1);            // swipe right = prev page
+			if (dx < 0) this.navigatePage(1);    // 左滑 = 下一页
+			else this.navigatePage(-1);            // 右滑 = 上一页
 		}
 	};
 
