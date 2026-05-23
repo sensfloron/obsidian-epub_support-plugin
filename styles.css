@@ -493,6 +493,12 @@
 /* === Immersive Reading Mode ===
    Animation timing follows Obsidian design tokens for consistent feel. */
 
+/* EPUB view header breadcrumb: subtle separators and hash prefix */
+.epub-vh-hash,
+.epub-vh-sep {
+	color: var(--text-faint);
+}
+
 body.epub-immersive .view-header,
 body.epub-immersive .status-bar,
 body.epub-immersive .mobile-navbar,

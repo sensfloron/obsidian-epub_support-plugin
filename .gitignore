@@ -22,6 +22,7 @@ data.json
 .DS_Store
 
 # WASM Module Build
-/lib
+*.wasm
 
 .claude/
+release/

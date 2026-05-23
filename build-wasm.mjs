@@ -9,12 +9,12 @@ const CRATES = [
   {
     crate: resolve(ROOT, 'src/lib/epub_parse_module'),
     wasmSrc: 'pkg/epub_parse_module_bg.wasm',
-    dst: resolve(ROOT, 'lib/epub_parse_module/epub_parse_module_bg.wasm'),
+    dst: resolve(ROOT, 'epub_parse_module_bg.wasm'),
   },
   {
     crate: resolve(ROOT, 'src/lib/epub_note_module'),
     wasmSrc: 'pkg/epub_note_module_bg.wasm',
-    dst: resolve(ROOT, 'lib/epub_note_module/epub_note_module_bg.wasm'),
+    dst: resolve(ROOT, 'epub_note_module_bg.wasm'),
   },
 ];
 
