@@ -1,5 +1,5 @@
 {
-	"id": "epub_rs-plugin",
+	"id": "obsidian-epub_rs-plugin",
 	"name": "epub support",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
