@@ -1,11 +1,11 @@
 {
-	"id": "obsidian-epub_rs-plugin",
+	"id": "obsidian-epub_support-plugin",
 	"name": "epub support",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "epub相关功能支持",
 	"author": "Floron Eon",
 	"authorUrl": "https://github.com/sensfloron",
-	"fundingUrl": "https://github.com/sensfloron/obsidian-epub_rs-plugin",
+	"fundingUrl": "https://github.com/sensfloron/obsidian-epub_support-plugin",
 	"isDesktopOnly": false
 }
