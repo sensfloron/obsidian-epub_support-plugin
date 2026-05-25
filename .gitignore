@@ -26,3 +26,6 @@ data.json
 
 .claude/
 release/
+
+# release push script (persistent, not tracked)
+release-push.sh

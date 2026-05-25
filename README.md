@@ -1,94 +1,77 @@
-# Obsidian Sample Plugin
+# EPUB Support Plugin for Obsidian
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+[![GitHub release](https://img.shields.io/github/v/release/sensfloron/obsidian-epub_support-plugin?style=flat-square)](https://github.com/sensfloron/obsidian-epub_support-plugin/releases)
+[English](README_en.md)
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+在 Obsidian 中直接阅读和管理 EPUB 电子书的插件，基于 Rust WASM 构建，支持分页阅读、连续滚动、大纲导航、沉浸模式等功能。
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## 功能
 
-## First time developing plugins?
+- **EPUB 解析与渲染** — 基于 Rust WASM 的高性能 EPUB 解析，支持章节内容提取、内嵌图片、代码块渲染
+- **分页阅读模式** — CSS 多栏分页，可配置 1-4 栏、页间距、翻页动画时长，支持键盘 / 鼠标 / 触屏翻页
+- **滚动阅读模式** — 连续垂直滚动，所有章节无缝衔接
+- **大纲导航** — 提取 EPUB 目录结构，树形展示，支持搜索筛选、折叠、自动定位当前章节
+- **沉浸阅读模式** — 桌面端自动隐藏 Obsidian 界面元素，移动端点击切换，专注阅读体验
+- **阅读进度持久化** — 自动保存当前章节、页码、句子位置、滚动进度、完成百分比
+- **脚注弹窗** — 点击脚注引用弹出浮动窗口显示内容
+- **图片查看器** — 支持缩放、拖拽、双击切换缩放
 
-Quick starting guide for new plugin devs:
+## 安装
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+### 通过发行版安装（推荐）
 
-## Releasing new releases
+1. 从 [Releases](https://github.com/sensfloron/obsidian-epub_support-plugin/releases) 下载 `epub_rs-plugin-{version}.zip`
+2. 解压到 vault 的 `.obsidian/plugins/epub_rs-plugin/` 目录
+3. 如需内嵌字体支持，下载 `epub_rs-plugin-fonts.zip` 解压到同目录
+4. 重启 Obsidian，在设置中启用插件
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+### 手动构建
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
-
-## Adding your plugin to the community plugin list
-
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```bash
+# 需要 Node.js 18+ 和 Rust 工具链（wasm32-unknown-unknown）
+git clone https://github.com/sensfloron/obsidian-epub_support-plugin.git
+cd obsidian-epub_support-plugin
+npm ci
+npm run build
 ```
 
-If you have multiple URLs, you can also do:
+## 使用
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+1. 将 `.epub` 文件放入 Obsidian vault
+2. 点击文件即可在 EPUB 视图中打开
+3. 使用左侧大纲面板浏览章节
+4. 在设置中调整阅读偏好
+
+## 设置
+
+| 选项 | 说明 |
+|------|------|
+| 默认视图模式 | 分页模式 / 滚动模式 |
+| 翻页方式 | 左右翻页 / 上下翻页 |
+| 分页栏数 | 1-4 栏 |
+| 栏间距 | CSS 值（如 `40px`） |
+| 翻页动画时长 | 毫秒 |
+| 启动时进入沉浸模式 | 开关 |
+| 笔记保存路径 | EPUB 笔记存储位置 |
+
+## 开发
+
+```bash
+npm run dev        # TypeScript 热编译
+npm run dev:wasm   # WASM 监听编译
+npm run build      # 完整构建（WASM + TS + esbuild）
 ```
 
-## API Documentation
+## 技术栈
 
-See https://github.com/obsidianmd/obsidian-api
+- TypeScript + esbuild
+- Rust → WASM（epub 解析、中文分句）
+- Obsidian Plugin API
+
+## 许可
+
+MIT
+
+## 作者
+
+[Floron Eon](https://github.com/sensfloron)

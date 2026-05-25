@@ -188,14 +188,26 @@ export class EpubView extends FileView {
             this.paginator.disableClickZones = true;
             this.setupViewHeaderHover();
             this.immersiveActive = this.settings.immersiveDefault;
-            if (this.immersiveActive) document.body.classList.add("epub-immersive");
+            if (this.immersiveActive) {
+                requestAnimationFrame(() => {
+                    document.body.classList.add("epub-immersive");
+                });
+            }
         } else {
             this.paginator.onCenterTap = () => {
                 this.immersiveActive = !this.immersiveActive;
-                document.body.classList.toggle("epub-immersive", this.immersiveActive);
+                if (this.immersiveActive) {
+                    requestAnimationFrame(() => {
+                        document.body.classList.add("epub-immersive");
+                    });
+                } else {
+                    document.body.classList.remove("epub-immersive");
+                }
             };
             this.immersiveActive = true;
-            document.body.classList.add("epub-immersive");
+            requestAnimationFrame(() => {
+                document.body.classList.add("epub-immersive");
+            });
         }
 
             this.paginator.setOnPageChange(() => {
@@ -421,21 +433,23 @@ export class EpubView extends FileView {
         if (!titleEl) return;
 
         const breadcrumb = this.findChapterBreadcrumb(this.tocData, this.currentChapter, []);
-        let html = '<span class="epub-vh-hash">#</span>';
+        if (!breadcrumb || breadcrumb.length === 0) {
+            titleEl.textContent = this.file?.basename ?? 'EPUB';
+            return;
+        }
 
-        if (breadcrumb && breadcrumb.length > 0) {
-            html += ' ' + breadcrumb
+        if (Platform.isDesktop) {
+            let html = '<span class="epub-vh-hash">#</span> ' + breadcrumb
                 .map((label, i) => {
                     const escaped = this.escapeHtml(label);
                     if (i === breadcrumb.length - 1) return `<span class="epub-vh-current">${escaped}</span>`;
                     return `<span>${escaped}</span> <span class="epub-vh-sep">|</span>`;
                 })
                 .join(' ');
+            titleEl.innerHTML = html;
         } else {
-            html += ` <span>${this.escapeHtml(this.file?.basename ?? 'EPUB')}</span>`;
+            titleEl.textContent = breadcrumb[0];
         }
-
-        titleEl.innerHTML = html;
     }
 
     private escapeHtml(s: string): string {
