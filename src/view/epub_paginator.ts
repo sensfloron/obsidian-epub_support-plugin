@@ -379,6 +379,24 @@ export class EpubPaginator {
             const selection = window.getSelection();
             if (selection && !selection.isCollapsed) return;
 
+            // 脚注链接不翻页，交由 EpubView 处理
+            const target = e.target as HTMLElement;
+            if (target.closest("a[href^='#']")) return;
+
+            // 脚注小图不翻页；正文图片仅中央 75% 区域打开查看器，边缘留给翻页
+            const img = target.closest("img") as HTMLImageElement | null;
+            if (img) {
+                const isFootnoteImg = img.matches(
+                    "img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
+                );
+                if (isFootnoteImg) return;
+
+                const imgRect = img.getBoundingClientRect();
+                const clickRelX = e.clientX - imgRect.left;
+                const margin = imgRect.width * 0.125;
+                if (clickRelX > margin && clickRelX < imgRect.width - margin) return;
+            }
+
             const rect = this.viewportEl!.getBoundingClientRect();
             const relX = e.clientX - rect.left;
             const third = rect.width / 3;

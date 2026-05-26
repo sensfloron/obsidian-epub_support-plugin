@@ -709,15 +709,20 @@ export class EpubView extends FileView {
             return;
         }
 
-        // 正文图片 → 打开图片查看器
+        // 正文图片 → 仅中央 75% 区域打开图片查看器，边缘留给翻页
         const contentImg = target.closest(
             "img:not(.fn-img):not(.qqreader-footnote):not(.duokan-footnote):not([class*='footnote'])"
         ) as HTMLImageElement | null;
         if (contentImg) {
-            evt.preventDefault();
-            evt.stopPropagation();
-            this.ensureImageViewerInfrastructure();
-            this.showImageViewer(contentImg);
+            const imgRect = contentImg.getBoundingClientRect();
+            const clickRelX = evt.clientX - imgRect.left;
+            const margin = imgRect.width * 0.125;
+            if (clickRelX > margin && clickRelX < imgRect.width - margin) {
+                evt.preventDefault();
+                evt.stopPropagation();
+                this.ensureImageViewerInfrastructure();
+                this.showImageViewer(contentImg);
+            }
             return;
         }
 
