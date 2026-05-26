@@ -169,6 +169,10 @@ export class EpubView extends FileView {
         if (savedProgress && savedProgress.totalChapters === this.handle.total_chapters()) {
             // Restore chapter position
             this.currentChapter = Math.min(savedProgress.chapterIndex, this.handle.total_chapters() - 1);
+        } else {
+            // 首次打开：跳过封面/目录页，跳转到目录中第一个内容章节
+            const firstContentIndex = this.tocData?.[0]?.chapterIndex ?? 0;
+            this.currentChapter = firstContentIndex;
         }
 
         if (this.settings.viewMode === 'scrolled') {
@@ -903,9 +907,10 @@ export class EpubView extends FileView {
 
         const isGif = img.src.startsWith("data:image/gif") || /\.gif/i.test(img.src);
 
-        // 强制重新加载以确保 GIF 从第一帧开始播放
-        this.imageViewerImg.src = "";
-        // 使用 requestAnimationFrame 确保 src 被清空后再设置新值
+        // 强制重新加载以确保 GIF 从第一帧开始播放：
+        // 先移除 src 属性（避免 src="" 触发浏览器对 base URL 的请求），
+        // 再在下一帧设置实际 src。
+        this.imageViewerImg.removeAttribute("src");
         requestAnimationFrame(() => {
             if (!this.imageViewerImg) return;
             this.imageViewerImg.src = img.src;
@@ -937,10 +942,8 @@ export class EpubView extends FileView {
         this.imageViewerGifBadge?.hide();
         this.imageViewerPanning = false;
         document.body.style.overflow = "";
-        // 清空 src，释放内存并确保下次打开时重新加载
-        if (this.imageViewerImg) {
-            this.imageViewerImg.src = "";
-        }
+        // 移除 src 以释放内存（不用 src="" 避免触发 base URL 请求）
+        this.imageViewerImg?.removeAttribute("src");
     }
 
     private applyImageViewerTransform(): void {
