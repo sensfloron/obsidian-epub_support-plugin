@@ -108,6 +108,7 @@ export class EpubView extends FileView {
     private imageViewerOverlay: HTMLElement | null = null;
     private imageViewerImg: HTMLImageElement | null = null;
     private imageViewerCloseBtn: HTMLElement | null = null;
+    private imageViewerGifBadge: HTMLElement | null = null;
     private imageViewerScale = 1;
     private imageViewerPanX = 0;
     private imageViewerPanY = 0;
@@ -838,6 +839,10 @@ export class EpubView extends FileView {
         this.imageViewerCloseBtn.setText("×");
         this.imageViewerCloseBtn.hide();
 
+        this.imageViewerGifBadge = this.imageViewerOverlay.createDiv("epub-image-gif-badge");
+        this.imageViewerGifBadge.setText("GIF");
+        this.imageViewerGifBadge.hide();
+
         // 屏蔽 Obsidian 移动端非边缘手势：
         // - 边缘区域（左右各 24px）放行，保留侧边栏边缘滑动
         // - 图片区域由 img 自身 handler 处理（缩放/拖拽）
@@ -896,7 +901,25 @@ export class EpubView extends FileView {
     private showImageViewer(img: HTMLImageElement): void {
         if (!this.imageViewerBackdrop || !this.imageViewerImg || !this.imageViewerCloseBtn) return;
 
-        this.imageViewerImg.src = img.src;
+        const isGif = img.src.startsWith("data:image/gif") || /\.gif/i.test(img.src);
+
+        // 强制重新加载以确保 GIF 从第一帧开始播放
+        this.imageViewerImg.src = "";
+        // 使用 requestAnimationFrame 确保 src 被清空后再设置新值
+        requestAnimationFrame(() => {
+            if (!this.imageViewerImg) return;
+            this.imageViewerImg.src = img.src;
+        });
+
+        // GIF 标记
+        if (isGif) {
+            this.imageViewerImg.dataset.gif = "true";
+            this.imageViewerGifBadge?.show();
+        } else {
+            delete this.imageViewerImg.dataset.gif;
+            this.imageViewerGifBadge?.hide();
+        }
+
         this.imageViewerScale = 1;
         this.imageViewerPanX = 0;
         this.imageViewerPanY = 0;
@@ -911,8 +934,13 @@ export class EpubView extends FileView {
     private hideImageViewer(): void {
         this.imageViewerBackdrop?.hide();
         this.imageViewerCloseBtn?.hide();
+        this.imageViewerGifBadge?.hide();
         this.imageViewerPanning = false;
         document.body.style.overflow = "";
+        // 清空 src，释放内存并确保下次打开时重新加载
+        if (this.imageViewerImg) {
+            this.imageViewerImg.src = "";
+        }
     }
 
     private applyImageViewerTransform(): void {
