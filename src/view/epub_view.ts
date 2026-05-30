@@ -9,6 +9,7 @@ import { TocItem } from "./epub_outline_view";
 export const EPUB_FILE_EXTENSION = "epub";
 export const VIEW_TYPE_EPUB = "epub";
 export const ICON_EPUB = "doc-epub";
+const TITLEPAGE_INDEX = -1;
 
 const PARSE_WASM_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/epub_parse_module_bg.wasm";
 const NOTE_WASM_PATH = ".obsidian/plugins/obsidian-epub_support-plugin/epub_note_module_bg.wasm";
@@ -98,6 +99,8 @@ export class EpubView extends FileView {
     private handle: EpubHandle | null = null;
     private textProcessor: TextProcessor | null = null;
     private currentChapter = 0;
+    private firstContentChapterIndex = 0;
+    private showingTitlePage = false;
     private tocData: TocItem[] = [];
     private contentArea: HTMLElement | null = null;
     private paginator: EpubPaginator | null = null;
@@ -165,14 +168,15 @@ export class EpubView extends FileView {
 
         // Check for saved progress before rendering
         const savedProgress = this.progressStore.getProgress(file.path);
+        let startWithTitlePage = false;
 
         if (savedProgress && savedProgress.totalChapters === this.handle.total_chapters()) {
             // Restore chapter position
             this.currentChapter = Math.min(savedProgress.chapterIndex, this.handle.total_chapters() - 1);
         } else {
-            // 首次打开：跳过封面/目录页，跳转到目录中第一个内容章节
-            const firstContentIndex = this.tocData?.[0]?.chapterIndex ?? 0;
-            this.currentChapter = firstContentIndex;
+            // 首次打开：展示扉页
+            this.currentChapter = this.firstContentChapterIndex;
+            startWithTitlePage = true;
         }
 
         if (this.settings.viewMode === 'scrolled') {
@@ -223,20 +227,24 @@ export class EpubView extends FileView {
             this.contentArea = this.contentEl.createDiv("epub-content");
             this.paginator.attach(this.contentArea);
 
-            const rawHtml = this.handle.get_chapter_content(this.currentChapter);
-            const markedHtml = this.textProcessor.mark_sentences(rawHtml);
-            this.paginator.loadChapter(markedHtml);
-
-            // Restore page if progress exists
-            if (savedProgress && savedProgress.pageIndex != null) {
-                const pageIndex = savedProgress.pageIndex;
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        this.paginator?.goToPage(pageIndex);
-                    });
-                });
+            if (startWithTitlePage) {
+                this.showTitlePage(0);
             } else {
-                this.saveCurrentProgress();
+                const rawHtml = this.handle.get_chapter_content(this.currentChapter);
+                const markedHtml = this.textProcessor.mark_sentences(rawHtml);
+                this.paginator.loadChapter(markedHtml);
+
+                // Restore page if progress exists
+                if (savedProgress && savedProgress.pageIndex != null) {
+                    const pageIndex = savedProgress.pageIndex;
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            this.paginator?.goToPage(pageIndex);
+                        });
+                    });
+                } else {
+                    this.saveCurrentProgress();
+                }
             }
         }
 
@@ -413,7 +421,19 @@ export class EpubView extends FileView {
                     children: item.children ? transform(item.children) : [],
                 }));
 
-            this.tocData = transform(rawToc);
+            const rawTocData = transform(rawToc);
+
+            // 取第一个目录项的章节索引作为首个内容章节，用于跳过前置内容
+            this.firstContentChapterIndex = rawTocData?.[0]?.chapterIndex ?? 0;
+
+            // 在目录最前面插入扉页条目
+            const titlePageEntry: TocItem = {
+                label: "扉页",
+                href: "",
+                chapterIndex: TITLEPAGE_INDEX,
+                children: [],
+            };
+            this.tocData = [titlePageEntry, ...rawTocData];
             this.onTocReady?.(this.tocData);
         } catch {
             // Ignore TOC errors
@@ -421,6 +441,7 @@ export class EpubView extends FileView {
     }
 
     private findChapterBreadcrumb(items: TocItem[], target: number, path: string[]): string[] | null {
+        if (target === TITLEPAGE_INDEX) return ["扉页"];
         for (const item of items) {
             const current = [...path, item.label];
             if (item.chapterIndex === target) return current;
@@ -436,6 +457,11 @@ export class EpubView extends FileView {
         const leafEl = this.containerEl.closest('.workspace-leaf') as HTMLElement | null;
         const titleEl = leafEl?.querySelector('.view-header-title') as HTMLElement | null;
         if (!titleEl) return;
+
+        if (this.showingTitlePage) {
+            titleEl.textContent = '扉页';
+            return;
+        }
 
         const breadcrumb = this.findChapterBreadcrumb(this.tocData, this.currentChapter, []);
         if (!breadcrumb || breadcrumb.length === 0) {
@@ -474,6 +500,14 @@ export class EpubView extends FileView {
         const total = this.handle?.total_chapters() ?? 0;
         if (total === 0) return "无内容";
 
+        if (this.showingTitlePage) {
+            if (this.settings.viewMode === 'paginated' && this.paginator) {
+                const page = this.paginator.getPageInfo();
+                return `扉页 — ${page.current + 1} / ${page.total} 页`;
+            }
+            return "扉页";
+        }
+
         if (this.settings.viewMode === 'paginated' && this.paginator) {
             const page = this.paginator.getPageInfo();
             return `第 ${this.currentChapter + 1} / ${total} 章 — ${page.current + 1} / ${page.total} 页`;
@@ -486,19 +520,52 @@ export class EpubView extends FileView {
     }
 
     getCurrentChapter(): number {
-        return this.currentChapter;
+        return this.showingTitlePage ? TITLEPAGE_INDEX : this.currentChapter;
     }
 
     navigateToChapter(index: number): void {
+        if (index === TITLEPAGE_INDEX) {
+            if (!this.showingTitlePage) {
+                this.showTitlePage(0);
+            }
+            return;
+        }
+        if (this.showingTitlePage) {
+            this.showingTitlePage = false;
+            if (index === this.currentChapter) {
+                // Force reload the chapter to replace the title page
+                this.navigateChapter(0);
+                return;
+            }
+        }
         const delta = index - this.currentChapter;
         if (delta !== 0) this.navigateChapter(delta);
     }
 
     private navigateChapter(delta: number): void {
         if (!this.handle || !this.textProcessor) return;
+
+        // 从第一个内容章节往回翻：展示生成的扉页，跳过前置内容
+        if (delta === -1 && !this.showingTitlePage && this.currentChapter === this.firstContentChapterIndex) {
+            this.showTitlePage();
+            return;
+        }
+
+        // 从扉页往后翻：回到第一个内容章节
+        if (delta === 1 && this.showingTitlePage) {
+            this.hideTitlePage();
+            return;
+        }
+
+        // 从扉页往回翻：已到边界，不做任何操作
+        if (delta === -1 && this.showingTitlePage) {
+            return;
+        }
+
         const total = this.handle.total_chapters();
         const next = this.currentChapter + delta;
         if (next < 0 || next >= total) return;
+        this.showingTitlePage = false;
         this.currentChapter = next;
 
         if (this.settings.viewMode === 'paginated' && this.paginator) {
@@ -508,6 +575,29 @@ export class EpubView extends FileView {
         } else {
             this.scrollToChapter(this.currentChapter);
         }
+        this.enhanceFootnoteRefs();
+        this.notifyPositionChange();
+        this.onChapterChange?.(this.currentChapter);
+        this.flashSaveProgress();
+    }
+
+    private showTitlePage(direction: -1 | 0 = -1): void {
+        if (!this.handle || !this.textProcessor || !this.paginator) return;
+        this.showingTitlePage = true;
+        const rawHtml = this.handle.generate_titlepage();
+        const markedHtml = this.textProcessor.mark_sentences(rawHtml);
+        this.paginator.loadChapter(markedHtml, direction);
+        this.enhanceFootnoteRefs();
+        this.notifyPositionChange();
+        this.onChapterChange?.(TITLEPAGE_INDEX);
+    }
+
+    private hideTitlePage(): void {
+        if (!this.handle || !this.textProcessor || !this.paginator) return;
+        this.showingTitlePage = false;
+        const rawHtml = this.handle.get_chapter_content(this.firstContentChapterIndex);
+        const markedHtml = this.textProcessor.mark_sentences(rawHtml);
+        this.paginator.loadChapter(markedHtml, 1);
         this.enhanceFootnoteRefs();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);

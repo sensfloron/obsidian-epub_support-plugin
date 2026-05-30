@@ -481,9 +481,13 @@ export class EpubPaginator {
     };
 
     private onResize = (): void => {
-        if (!this.trackEl || this.totalPages <= 1) return;
+        if (!this.trackEl) return;
 
-        const progress = this.currentPage / Math.max(1, this.totalPages - 1);
+        const prevTotal = this.totalPages;
+        const progress = prevTotal > 1
+            ? this.currentPage / (prevTotal - 1)
+            : 0;
+
         this.clearTransitionTimeout();
         this.isTransitioning = false;
 
@@ -494,9 +498,13 @@ export class EpubPaginator {
             requestAnimationFrame(() => {
                 const newTotal = this.calculateTotalPages();
                 this.totalPages = newTotal;
-                this.currentPage = Math.round(progress * Math.max(1, newTotal - 1));
+                this.currentPage = Math.min(
+                    Math.round(progress * Math.max(1, newTotal - 1)),
+                    newTotal - 1
+                );
                 this.updateTransform(false);
                 this.updatePageIndicator();
+                this.onPageChangeCallback?.(this.currentPage, this.totalPages);
             });
         });
     };
