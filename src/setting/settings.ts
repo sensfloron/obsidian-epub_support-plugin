@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: EpubPluginSettings = {
     transitionDuration: 350,
     mobileColumnThreshold: 600,
     outlineCollapsed: true,
-    immersiveDefault: true,
+    immersiveDefault: false,
 }
 
 
@@ -163,6 +163,7 @@ export class EpubSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.immersiveDefault = value;
                     await this.plugin.saveSettings();
+                    this.plugin.refreshImmersiveMode();
                 }));
     }
 }

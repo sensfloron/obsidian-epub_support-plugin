@@ -23,6 +23,7 @@ export class EpubOutlineView extends ItemView {
 	private collapseBtnEl: HTMLElement | null = null;
 	private lastScrollTop = 0;
 	private scrollTrackerBound = false;
+	private manuallyExpanded = new Set<number>();
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -37,7 +38,7 @@ export class EpubOutlineView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "list";
+		return "list-tree";
 	}
 
 	async onOpen() {
@@ -51,6 +52,9 @@ export class EpubOutlineView extends ItemView {
 
 	setCurrentChapter(index: number): void {
 		this.currentChapter = index;
+		if (this.treeCollapsedAll) {
+			this.applyCollapseState();
+		}
 		this.updateActiveItem();
 	}
 
@@ -82,7 +86,7 @@ export class EpubOutlineView extends ItemView {
 
 		this.collapseBtnEl = bar.createDiv({ cls: "epub-outline-collapse-btn clickable-icon" });
 		setIcon(this.collapseBtnEl, "list-tree");
-		if (this.treeCollapsedAll) {
+		if (!this.treeCollapsedAll) {
 			this.collapseBtnEl.addClass("is-active");
 		}
 		this.collapseBtnEl.addEventListener("click", () => this.toggleCollapseAll());
@@ -176,12 +180,21 @@ export class EpubOutlineView extends ItemView {
 			items.forEach((el) => el.removeClass("collapsed"));
 			return;
 		}
-		// Collapse all, then expand ancestor chain of current chapter
-		const ancestors = this.findAncestorPath(this.tocData, this.currentChapter);
-		const ancestorSet = new Set(ancestors);
+		// 跟随展开：折叠全部，然后展开当前章节的祖先链和手动展开的项
+		const expandedChapters = new Set<number>();
+		// 当前章节的祖先
+		for (const ch of this.findAncestorPath(this.tocData, this.currentChapter)) {
+			expandedChapters.add(ch);
+		}
+		// 手动展开的项及其祖先（确保它们在树中可见）
+		for (const ch of this.manuallyExpanded) {
+			for (const a of this.findAncestorPath(this.tocData, ch)) {
+				expandedChapters.add(a);
+			}
+		}
 		items.forEach((el) => {
 			const ch = parseInt(el.getAttribute("data-chapter") ?? "", 10);
-			if (ancestorSet.has(ch)) {
+			if (expandedChapters.has(ch)) {
 				el.removeClass("collapsed");
 			} else {
 				el.addClass("collapsed");
@@ -281,7 +294,12 @@ export class EpubOutlineView extends ItemView {
 				e.stopPropagation();
 				e.preventDefault();
 				itemEl.classList.toggle("collapsed");
-			});
+					if (itemEl.classList.contains("collapsed")) {
+						this.manuallyExpanded.delete(item.chapterIndex);
+					} else {
+						this.manuallyExpanded.add(item.chapterIndex);
+					}
+				});
 		}
 
 		const inner = self.createSpan({ cls: "epub-outline-inner", text: item.label });

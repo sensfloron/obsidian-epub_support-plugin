@@ -1,4 +1,4 @@
-import { addIcon, Platform, Plugin, WorkspaceLeaf } from 'obsidian';
+import { addIcon, Platform, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { EpubSettingTab, EpubPluginSettings, DEFAULT_SETTINGS } from 'setting/settings'
 import { EpubView, ICON_EPUB, EPUB_FILE_EXTENSION, VIEW_TYPE_EPUB } from 'view/epub_view'
 import { EpubOutlineView, VIEW_TYPE_EPUB_OUTLINE, TocItem } from 'view/epub_outline_view'
@@ -31,7 +31,12 @@ export default class EpubSupportPlugin extends Plugin {
 				this.statusBarItemEl.setText(label);
 			};
 			view.onProgressSave = () => this.saveProgressData();
-			view.onTocReady = (toc: TocItem[]) => this.updateOutline(toc);
+			view.onTocReady = (toc: TocItem[]) => {
+					this.updateOutline(toc);
+					if (Platform.isDesktop) {
+						this.activateOutline();
+					}
+				};
 			view.onChapterChange = (index: number) => this.updateOutlineChapter(index);
 			return view;
 		});
@@ -49,7 +54,7 @@ export default class EpubSupportPlugin extends Plugin {
 			return view;
 		});
 
-		this.addRibbonIcon("list", "EPUB 目录", () => this.activateOutline());
+		this.addRibbonIcon("list-tree", "EPUB 目录", () => this.activateOutline());
 
 		try {
 			this.registerExtensions([EPUB_FILE_EXTENSION], VIEW_TYPE_EPUB);
@@ -66,13 +71,29 @@ export default class EpubSupportPlugin extends Plugin {
 			})
 		);
 
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			// console.log('click', evt);
-		});
+		// 跟踪 EPUB 文件重命名/移动，自动迁移阅读进度
+		this.registerEvent(
+			this.app.vault.on('rename', (file, oldPath) => {
+				if (file instanceof TFile && file.extension === EPUB_FILE_EXTENSION) {
+					this.progressStore.migrateProgress(oldPath, file.path);
+					this.saveProgressData();
+				}
+			})
+		);
+
+		// 清理已删除 EPUB 文件的阅读进度记录
+		this.registerEvent(
+			this.app.vault.on('delete', (file) => {
+				if (file instanceof TFile && file.extension === EPUB_FILE_EXTENSION) {
+					this.progressStore.deleteProgress(file.path);
+					this.saveProgressData();
+				}
+			})
+		);
 	}
 
 	private refreshStatusBar(): void {
-		const view = this.app.workspace.activeLeaf?.view;
+		const view = this.app.workspace.getActiveViewOfType(EpubView);
 		if (view instanceof EpubView) {
 			this.statusBarItemEl.setText(view.getPositionLabel());
 		} else {
@@ -81,12 +102,19 @@ export default class EpubSupportPlugin extends Plugin {
 	}
 
 	private syncOutline(): void {
-		const activeView = this.app.workspace.activeLeaf?.view;
+		const activeView = this.app.workspace.getActiveViewOfType(EpubView);
 		if (activeView instanceof EpubView) {
 			this.updateOutline(activeView.getTocData());
 			this.updateOutlineChapter(activeView.getCurrentChapter());
 		}
 		// 非 EPUB 标签页时保持当前目录不变，不清空
+	}
+
+	refreshImmersiveMode(): void {
+		const view = this.app.workspace.getActiveViewOfType(EpubView);
+		if (view) {
+			view.applyImmersiveMode();
+		}
 	}
 
 	private navigateToChapter(chapterIndex: number): void {

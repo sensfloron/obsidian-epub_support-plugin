@@ -519,6 +519,16 @@ export class EpubView extends FileView {
         return this.tocData;
     }
 
+    applyImmersiveMode(): void {
+        if (!Platform.isDesktop) return;
+        this.immersiveActive = this.settings.immersiveDefault;
+        if (this.immersiveActive) {
+            document.body.classList.add("epub-immersive");
+        } else {
+            document.body.classList.remove("epub-immersive");
+        }
+    }
+
     getCurrentChapter(): number {
         return this.showingTitlePage ? TITLEPAGE_INDEX : this.currentChapter;
     }
@@ -624,7 +634,7 @@ export class EpubView extends FileView {
         if (this.settings.viewMode !== 'paginated') return;
         this.registerDomEvent(document, 'keydown', (evt: KeyboardEvent) => {
             if (!this.paginator) return;
-            if (this.app.workspace.activeLeaf !== this.leaf) return;
+            if (this.app.workspace.getActiveViewOfType(EpubView) !== this) return;
             const tag = (evt.target as HTMLElement)?.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 

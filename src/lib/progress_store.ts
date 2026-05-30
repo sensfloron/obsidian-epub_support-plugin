@@ -53,6 +53,17 @@ export class ProgressStore {
         delete this.progresses[epubPath];
     }
 
+    /** Migrate progress from oldPath to newPath (file rename / move). No-op if oldPath has no entry. */
+    migrateProgress(oldPath: string, newPath: string): void {
+        if (this.progresses[oldPath]) {
+            this.progresses[newPath] = {
+                ...this.progresses[oldPath],
+                epubPath: newPath,
+            };
+            delete this.progresses[oldPath];
+        }
+    }
+
     listAll(): EpubProgress[] {
         return Object.values(this.progresses).sort(
             (a, b) => b.lastReadAt - a.lastReadAt,
