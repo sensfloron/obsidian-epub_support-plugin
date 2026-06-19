@@ -4,7 +4,10 @@ import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/
 import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
 import { EpubProgress, ProgressStore } from "../lib/progress_store";
+import { ProgressTracker } from "../lib/progress_tracker";
 import { TocItem } from "./epub_outline_view";
+import { FootnoteManager } from "./footnote_manager";
+import { ImageViewerController } from "./image_viewer_controller";
 
 export const EPUB_FILE_EXTENSION = "epub";
 export const VIEW_TYPE_EPUB = "epub";
@@ -91,9 +94,6 @@ async function initNoteWasmOnce(readBinary: (path: string) => Promise<ArrayBuffe
     noteWasmReady = true;
 }
 
-const SAVE_DEBOUNCE_MS = 300;
-
-
 export class EpubView extends FileView {
     allowNoFile: false = false;
     private handle: EpubHandle | null = null;
@@ -105,26 +105,9 @@ export class EpubView extends FileView {
     private contentArea: HTMLElement | null = null;
     private paginator: EpubPaginator | null = null;
     private actionsAdded = false;
-    private footnotePopover: HTMLElement | null = null;
-    private footnoteBackdrop: HTMLElement | null = null;
-    private imageViewerBackdrop: HTMLElement | null = null;
-    private imageViewerOverlay: HTMLElement | null = null;
-    private imageViewerImg: HTMLImageElement | null = null;
-    private imageViewerCloseBtn: HTMLElement | null = null;
-    private imageViewerGifBadge: HTMLElement | null = null;
-    private imageViewerScale = 1;
-    private imageViewerPanX = 0;
-    private imageViewerPanY = 0;
-    private imageViewerPanning = false;
-    private imageViewerPanStartX = 0;
-    private imageViewerPanStartY = 0;
-    private imageViewerPanOrigX = 0;
-    private imageViewerPanOrigY = 0;
-    private imageViewerPinchStartDist = 0;
-    private imageViewerPinchStartScale = 1;
-    private imageViewerTouchInEdgeZone = false;
-    private fnObserver: MutationObserver | null = null;
-    private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private footnoteManager: FootnoteManager;
+    private imageViewerController: ImageViewerController;
+    private progressTracker: ProgressTracker;
     private lastKeyTime = 0;
     private selectionBar: HTMLElement | null = null;
     private viewHeaderHoverCleanup: (() => void) | null = null;
@@ -140,6 +123,12 @@ export class EpubView extends FileView {
         private progressStore: ProgressStore,
     ) {
         super(leaf);
+        this.progressTracker = new ProgressTracker(progressStore, () => this.onProgressSave?.());
+        this.imageViewerController = new ImageViewerController(this.contentEl);
+        this.footnoteManager = new FootnoteManager(this.contentEl, {
+            onImageClick: (img) => this.imageViewerController.show(img),
+            onContentChanged: () => this.highlightCodeBlocks(),
+        });
     }
 
     async onLoadFile(file: TFile): Promise<void> {
@@ -164,7 +153,8 @@ export class EpubView extends FileView {
         this.buildAndPublishToc();
 
         this.addViewActions();
-        this.ensureFootnoteInfrastructure();
+        this.footnoteManager.install();
+        this.registerDomEvent(this.contentEl, "click", this.footnoteManager.handleClick);
 
         // Check for saved progress before rendering
         const savedProgress = this.progressStore.getProgress(file.path);
@@ -221,7 +211,8 @@ export class EpubView extends FileView {
 
             this.paginator.setOnPageChange(() => {
                 this.notifyPositionChange();
-                this.debounceSaveProgress();
+                const p = this.buildProgress();
+                if (p) this.progressTracker.schedule(p);
             });
 
             this.contentArea = this.contentEl.createDiv("epub-content");
@@ -243,13 +234,13 @@ export class EpubView extends FileView {
                         });
                     });
                 } else {
-                    this.saveCurrentProgress();
+                    const p = this.buildProgress();
+                    if (p) this.progressTracker.save(p);
                 }
             }
         }
 
-        this.enhanceFootnoteRefs();
-        this.observeContentChanges();
+        this.footnoteManager.enhance();
         this.highlightCodeBlocks();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
@@ -257,11 +248,12 @@ export class EpubView extends FileView {
         this.registerSelectionEvents();
         }
 
-    private saveCurrentProgress(): void {
-        if (!this.handle || !this.file) return;
+    // ── Progress persistence (delegated to ProgressTracker) ──
 
+    private buildProgress(): EpubProgress | null {
+        if (!this.handle || !this.file) return null;
         const total = this.handle.total_chapters();
-        const progress: EpubProgress = {
+        return {
             epubPath: this.file.path,
             chapterIndex: this.currentChapter,
             pageIndex: this.paginator?.getPageInfo().current ?? 0,
@@ -273,22 +265,6 @@ export class EpubView extends FileView {
                 ? Math.round(((this.currentChapter + 1) / total) * 100)
                 : 0,
         };
-
-        this.progressStore.setProgress(progress);
-    }
-
-    private debounceSaveProgress(): void {
-        if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
-        this.saveDebounceTimer = setTimeout(() => {
-            this.saveCurrentProgress();
-            this.onProgressSave?.();
-        }, SAVE_DEBOUNCE_MS);
-    }
-
-    private flashSaveProgress(): void {
-        if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
-        this.saveCurrentProgress();
-        this.onProgressSave?.();
     }
 
     private highlightCodeBlocks(): void {
@@ -585,10 +561,10 @@ export class EpubView extends FileView {
         } else {
             this.scrollToChapter(this.currentChapter);
         }
-        this.enhanceFootnoteRefs();
+        this.footnoteManager.enhance();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
-        this.flashSaveProgress();
+        this.progressTracker.flush();
     }
 
     private showTitlePage(direction: -1 | 0 = -1): void {
@@ -597,7 +573,7 @@ export class EpubView extends FileView {
         const rawHtml = this.handle.generate_titlepage();
         const markedHtml = this.textProcessor.mark_sentences(rawHtml);
         this.paginator.loadChapter(markedHtml, direction);
-        this.enhanceFootnoteRefs();
+        this.footnoteManager.enhance();
         this.notifyPositionChange();
         this.onChapterChange?.(TITLEPAGE_INDEX);
     }
@@ -608,10 +584,10 @@ export class EpubView extends FileView {
         const rawHtml = this.handle.get_chapter_content(this.firstContentChapterIndex);
         const markedHtml = this.textProcessor.mark_sentences(rawHtml);
         this.paginator.loadChapter(markedHtml, 1);
-        this.enhanceFootnoteRefs();
+        this.footnoteManager.enhance();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
-        this.flashSaveProgress();
+        this.progressTracker.flush();
     }
 
     private scrollToChapter(index: number): void {
@@ -660,12 +636,11 @@ export class EpubView extends FileView {
     }
 
     onunload(): void {
-        this.fnObserver?.disconnect();
-        this.fnObserver = null;
-        if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+        this.footnoteManager.dispose();
+        this.imageViewerController.dispose();
         // Save final progress before any DOM changes that could trigger resize
-        this.saveCurrentProgress();
-        this.onProgressSave?.();
+        this.progressTracker.flush();
+        this.progressTracker.dispose();
         document.body.classList.remove("epub-immersive");
         document.body.style.overflow = "";
         this.paginator?.destroy();
@@ -693,487 +668,6 @@ export class EpubView extends FileView {
     getIcon() {
         return ICON_EPUB;
     }
-
-    // ── Footnote support ──
-
-    private ensureFootnoteInfrastructure(): void {
-        if (this.footnotePopover) return;
-
-        this.footnoteBackdrop = this.contentEl.createDiv("epub-footnote-backdrop");
-        this.footnoteBackdrop.hide();
-        this.footnoteBackdrop.addEventListener("click", () => this.hideFootnotePopover());
-
-        this.footnotePopover = this.contentEl.createDiv("epub-footnote-popover");
-        this.footnotePopover.hide();
-
-        this.registerDomEvent(
-            this.contentEl,
-            "click",
-            this.onFootnoteClick
-        );
-    }
-
-    private observeContentChanges(): void {
-        this.fnObserver?.disconnect();
-        const track = this.contentEl.querySelector(".epub-paginated-track");
-        if (track) {
-            this.fnObserver = new MutationObserver(() => {
-                this.enhanceFootnoteRefs();
-                this.highlightCodeBlocks();
-            });
-            this.fnObserver.observe(track, { childList: true, subtree: true });
-        }
-    }
-
-    private enhanceFootnoteRefs(): void {
-        const container =
-            this.contentEl.querySelector(".epub-paginated-track") ??
-            this.contentEl.querySelector(".epub-content");
-        if (!container) return;
-
-        this.fnObserver?.disconnect();
-
-        const links = container.querySelectorAll("a[href^='#']");
-        links.forEach((link) => {
-            if (link.classList.contains("fn-ref")) return;
-
-            const href = link.getAttribute("href");
-            if (!href || href === "#") return;
-
-            const isRef =
-                link.getAttribute("epub:type") === "noteref" ||
-                link.classList.contains("footnote-ref") ||
-                link.closest("sup") !== null ||
-                /^(?:fnref|ftnref|noteref|endnoteref)/i.test(link.id);
-
-            if (isRef) {
-                link.classList.add("fn-ref");
-            }
-        });
-
-        const fnImgs = container.querySelectorAll(
-            "img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
-        );
-        fnImgs.forEach((img) => {
-            if (!img.classList.contains("fn-img")) {
-                img.classList.add("fn-img");
-            }
-        });
-
-        this.observeContentChanges();
-    }
-
-    private isFootnoteRef(el: HTMLElement): boolean {
-        if (el.classList.contains("fn-ref")) return true;
-        const href = el.getAttribute("href");
-        if (!href || !href.startsWith("#")) return false;
-        if (el.getAttribute("epub:type") === "noteref") return true;
-        if (el.closest("sup") !== null) return true;
-        if (/^(?:fnref|ftnref|noteref|endnoteref)/i.test(el.id)) return true;
-        return false;
-    }
-
-    private findFootnoteContent(href: string): HTMLElement | null {
-        const id = href.replace(/^#/, "");
-        if (!id) return null;
-
-        const target = document.getElementById(id);
-        if (!target) return null;
-
-        if (
-            target.getAttribute("epub:type") === "footnote" ||
-            target.tagName === "ASIDE" ||
-            target.classList.contains("footnote") ||
-            target.classList.contains("footnotes") ||
-            target.classList.contains("endnote") ||
-            /fn|footnote|endnote/i.test(target.className)
-        ) {
-            return target;
-        }
-
-        const ancestor = target.closest(
-            "aside, .footnote, .footnotes, .endnote, [epub\\:type='footnote'], li.footnote"
-        );
-        if (ancestor) return ancestor as HTMLElement;
-
-        if (target.textContent?.trim()) return target;
-
-        return null;
-    }
-
-    private onFootnoteClick = (evt: MouseEvent): void => {
-        const target = evt.target as HTMLElement;
-
-        if (target.closest(".epub-footnote-popover")) {
-            this.hideFootnotePopover();
-            return;
-        }
-
-        // 图片查看器内的点击不处理
-        if (target.closest(".epub-image-overlay")) {
-            return;
-        }
-
-        // 正文图片 → 仅中央 75% 区域打开图片查看器，边缘留给翻页
-        const contentImg = target.closest(
-            "img:not(.fn-img):not(.qqreader-footnote):not(.duokan-footnote):not([class*='footnote'])"
-        ) as HTMLImageElement | null;
-        if (contentImg) {
-            const imgRect = contentImg.getBoundingClientRect();
-            const clickRelX = evt.clientX - imgRect.left;
-            const margin = imgRect.width * 0.125;
-            if (clickRelX > margin && clickRelX < imgRect.width - margin) {
-                evt.preventDefault();
-                evt.stopPropagation();
-                this.ensureImageViewerInfrastructure();
-                this.showImageViewer(contentImg);
-            }
-            return;
-        }
-
-        const fnImg = target.closest(
-            "img.fn-img, img.qqreader-footnote, img.duokan-footnote, img[class*='footnote']"
-        ) as HTMLImageElement | null;
-        if (fnImg) {
-            evt.preventDefault();
-            evt.stopPropagation();
-            this.showFootnotePopoverForImage(fnImg, evt);
-            return;
-        }
-
-        const ref = target.closest("a[href^='#']") as HTMLAnchorElement | null;
-        if (!ref) return;
-
-        if (!this.isFootnoteRef(ref)) return;
-
-        evt.preventDefault();
-        evt.stopPropagation();
-
-        const href = ref.getAttribute("href");
-        if (!href) return;
-
-        const fnContent = this.findFootnoteContent(href);
-        if (!fnContent) return;
-
-        this.showFootnotePopoverForElement(fnContent, evt);
-    }
-
-    private showFootnotePopoverForElement(fnEl: HTMLElement, evt: MouseEvent): void {
-        if (!this.footnotePopover || !this.footnoteBackdrop) return;
-
-        const clone = fnEl.cloneNode(true) as HTMLElement;
-        clone.querySelectorAll("a[href^='#']").forEach((a) => {
-            a.classList.add("fn-backlink");
-        });
-
-        const numEl = clone.querySelector("sup, .footnote-num, .fn-num");
-        const numText = numEl?.textContent?.trim() ?? "";
-
-        this.footnotePopover.empty();
-        if (numText) {
-            this.footnotePopover.createSpan({ cls: "fn-num", text: numText });
-        }
-        this.footnotePopover.createSpan({ cls: "fn-text" }).appendChild(clone);
-        this.footnotePopover.show();
-        this.footnoteBackdrop.show();
-
-        this.positionPopover(evt);
-    }
-
-    private showFootnotePopoverForImage(img: HTMLImageElement, evt: MouseEvent): void {
-        if (!this.footnotePopover || !this.footnoteBackdrop) return;
-
-        const altText = img.getAttribute("alt")?.trim() ?? "";
-        const titleText = img.getAttribute("title")?.trim() ?? "";
-        const content = altText || titleText;
-        if (!content) return;
-
-        this.footnotePopover.empty();
-        this.footnotePopover.createSpan({ cls: "fn-text", text: content });
-        this.footnotePopover.show();
-        this.footnoteBackdrop.show();
-
-        this.positionPopover(evt);
-    }
-
-    private positionPopover(evt: MouseEvent): void {
-        if (!this.footnotePopover) return;
-
-        const popoverRect = this.footnotePopover.getBoundingClientRect();
-        const popoverW = popoverRect.width || 300;
-        const popoverH = popoverRect.height || 150;
-
-        let left = evt.clientX - popoverW / 2;
-        let top = evt.clientY - popoverH - 12;
-
-        left = Math.max(8, Math.min(left, window.innerWidth - popoverW - 8));
-
-        if (top < 8) {
-            top = evt.clientY + 20;
-        }
-
-        if (top + popoverH > window.innerHeight - 8) {
-            top = window.innerHeight - popoverH - 8;
-        }
-
-        this.footnotePopover.setCssProps({
-            position: "fixed",
-            left: `${left}px`,
-            top: `${top}px`,
-        });
-    }
-
-    private hideFootnotePopover(): void {
-        this.footnotePopover?.hide();
-        this.footnoteBackdrop?.hide();
-    }
-
-    // ── Image viewer ──
-
-    private ensureImageViewerInfrastructure(): void {
-        if (this.imageViewerBackdrop) return;
-
-        this.imageViewerBackdrop = this.contentEl.createDiv("epub-image-backdrop");
-        this.imageViewerBackdrop.hide();
-
-        this.imageViewerOverlay = this.imageViewerBackdrop.createDiv("epub-image-overlay");
-        this.imageViewerImg = this.imageViewerOverlay.createEl("img");
-
-        this.imageViewerCloseBtn = this.contentEl.createEl("button", { cls: "epub-image-close-btn" });
-        this.imageViewerCloseBtn.setText("×");
-        this.imageViewerCloseBtn.hide();
-
-        this.imageViewerGifBadge = this.imageViewerOverlay.createDiv("epub-image-gif-badge");
-        this.imageViewerGifBadge.setText("GIF");
-        this.imageViewerGifBadge.hide();
-
-        // 屏蔽 Obsidian 移动端非边缘手势：
-        // - 边缘区域（左右各 24px）放行，保留侧边栏边缘滑动
-        // - 图片区域由 img 自身 handler 处理（缩放/拖拽）
-        // - 其余区域屏蔽（阻止任意位置触发侧边栏和命令面板）
-        this.imageViewerBackdrop.addEventListener("touchstart", (e) => {
-            const edgeW = 24;
-            const touchX = e.touches[0]?.clientX ?? 0;
-            this.imageViewerTouchInEdgeZone =
-                touchX < edgeW || touchX > window.innerWidth - edgeW;
-            if (!this.imageViewerTouchInEdgeZone) {
-                e.stopPropagation();
-            }
-        }, { passive: true });
-        this.imageViewerBackdrop.addEventListener("touchmove", (e) => {
-            if (!this.imageViewerTouchInEdgeZone) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, { passive: false });
-        this.imageViewerBackdrop.addEventListener("touchend", () => {
-            this.imageViewerTouchInEdgeZone = false;
-        });
-
-        // 点击背景关闭
-        this.imageViewerBackdrop.addEventListener("click", (e) => {
-            if (e.target === this.imageViewerBackdrop) this.hideImageViewer();
-        });
-
-        // 关闭按钮
-        this.imageViewerCloseBtn.addEventListener("click", () => this.hideImageViewer());
-
-        // Escape 关闭
-        this.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
-            if (e.key === "Escape" && this.imageViewerBackdrop && !this.imageViewerBackdrop.hidden) {
-                this.hideImageViewer();
-            }
-        });
-
-        // 滚轮缩放
-        this.imageViewerOverlay.addEventListener("wheel", this.onImageViewerWheel, { passive: false });
-
-        // 鼠标拖拽平移
-        this.imageViewerImg.addEventListener("mousedown", this.onImageViewerMouseDown);
-        this.registerDomEvent(document, "mousemove", this.onImageViewerMouseMove);
-        this.registerDomEvent(document, "mouseup", this.onImageViewerMouseUp);
-
-        // 双击切换缩放
-        this.imageViewerImg.addEventListener("dblclick", this.onImageViewerDblClick);
-
-        // 触摸事件（pinch 缩放 + 单指平移）
-        this.imageViewerImg.addEventListener("touchstart", this.onImageViewerTouchStart, { passive: false });
-        this.imageViewerImg.addEventListener("touchmove", this.onImageViewerTouchMove, { passive: false });
-        this.imageViewerImg.addEventListener("touchend", this.onImageViewerTouchEnd);
-    }
-
-    private showImageViewer(img: HTMLImageElement): void {
-        if (!this.imageViewerBackdrop || !this.imageViewerImg || !this.imageViewerCloseBtn) return;
-
-        const isGif = img.src.startsWith("data:image/gif") || /\.gif/i.test(img.src);
-
-        // 强制重新加载以确保 GIF 从第一帧开始播放：
-        // 先移除 src 属性（避免 src="" 触发浏览器对 base URL 的请求），
-        // 再在下一帧设置实际 src。
-        this.imageViewerImg.removeAttribute("src");
-        requestAnimationFrame(() => {
-            if (!this.imageViewerImg) return;
-            this.imageViewerImg.src = img.src;
-        });
-
-        // GIF 标记
-        if (isGif) {
-            this.imageViewerImg.dataset.gif = "true";
-            this.imageViewerGifBadge?.show();
-        } else {
-            delete this.imageViewerImg.dataset.gif;
-            this.imageViewerGifBadge?.hide();
-        }
-
-        this.imageViewerScale = 1;
-        this.imageViewerPanX = 0;
-        this.imageViewerPanY = 0;
-        this.applyImageViewerTransform();
-
-        this.imageViewerBackdrop.show();
-        this.imageViewerCloseBtn.show();
-        // 禁止 body 滚动
-        document.body.style.overflow = "hidden";
-    }
-
-    private hideImageViewer(): void {
-        this.imageViewerBackdrop?.hide();
-        this.imageViewerCloseBtn?.hide();
-        this.imageViewerGifBadge?.hide();
-        this.imageViewerPanning = false;
-        document.body.style.overflow = "";
-        // 移除 src 以释放内存（不用 src="" 避免触发 base URL 请求）
-        this.imageViewerImg?.removeAttribute("src");
-    }
-
-    private applyImageViewerTransform(): void {
-        if (!this.imageViewerImg) return;
-        const tx = this.imageViewerPanX;
-        const ty = this.imageViewerPanY;
-        const s = this.imageViewerScale;
-        this.imageViewerImg.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
-    }
-
-    private clampPan(): void {
-        // 缩放为 1 时不需平移（复位）
-        if (this.imageViewerScale <= 1) {
-            this.imageViewerPanX = 0;
-            this.imageViewerPanY = 0;
-            return;
-        }
-        // 限制平移范围避免图片完全拖出视野
-        const s = this.imageViewerScale;
-        const maxD = 200 * (s - 1); // 缩放越大允许拖越远
-        this.imageViewerPanX = Math.max(-maxD, Math.min(maxD, this.imageViewerPanX));
-        this.imageViewerPanY = Math.max(-maxD, Math.min(maxD, this.imageViewerPanY));
-    }
-
-    // 滚轮缩放
-    private onImageViewerWheel = (e: WheelEvent): void => {
-        e.preventDefault();
-        const delta = -e.deltaY * 0.005;
-        const prev = this.imageViewerScale;
-        this.imageViewerScale = Math.max(0.5, Math.min(5, this.imageViewerScale * (1 + delta)));
-        // 以鼠标位置为中心缩放（近似）
-        if (this.imageViewerScale !== prev && this.imageViewerScale > 1 && this.imageViewerImg) {
-            const rect = this.imageViewerImg.getBoundingClientRect();
-            const cx = e.clientX - rect.left;
-            const cy = e.clientY - rect.top;
-            const factor = this.imageViewerScale / prev - 1;
-            this.imageViewerPanX -= cx * factor;
-            this.imageViewerPanY -= cy * factor;
-        }
-        if (this.imageViewerScale <= 1) {
-            this.imageViewerPanX = 0;
-            this.imageViewerPanY = 0;
-        }
-        this.clampPan();
-        this.applyImageViewerTransform();
-    };
-
-    // 鼠标拖拽平移
-    private onImageViewerMouseDown = (e: MouseEvent): void => {
-        if (this.imageViewerScale <= 1) return;
-        e.preventDefault();
-        this.imageViewerPanning = true;
-        this.imageViewerPanStartX = e.clientX;
-        this.imageViewerPanStartY = e.clientY;
-        this.imageViewerPanOrigX = this.imageViewerPanX;
-        this.imageViewerPanOrigY = this.imageViewerPanY;
-        this.imageViewerImg?.addClass("grabbing");
-    };
-
-    private onImageViewerMouseMove = (e: MouseEvent): void => {
-        if (!this.imageViewerPanning) return;
-        this.imageViewerPanX = this.imageViewerPanOrigX + (e.clientX - this.imageViewerPanStartX);
-        this.imageViewerPanY = this.imageViewerPanOrigY + (e.clientY - this.imageViewerPanStartY);
-        this.clampPan();
-        this.applyImageViewerTransform();
-    };
-
-    private onImageViewerMouseUp = (): void => {
-        this.imageViewerPanning = false;
-        this.imageViewerImg?.removeClass("grabbing");
-    };
-
-    // 双击切换 1x ↔ 2x
-    private onImageViewerDblClick = (e: MouseEvent): void => {
-        e.preventDefault();
-        if (this.imageViewerScale > 1.1) {
-            this.imageViewerScale = 1;
-            this.imageViewerPanX = 0;
-            this.imageViewerPanY = 0;
-        } else {
-            this.imageViewerScale = 2;
-            this.imageViewerPanX = 0;
-            this.imageViewerPanY = 0;
-        }
-        this.applyImageViewerTransform();
-    };
-
-    // 触摸 pinch 缩放
-    private onImageViewerTouchStart = (e: TouchEvent): void => {
-        if (e.touches.length === 2) {
-            e.preventDefault();
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            this.imageViewerPinchStartDist = Math.hypot(dx, dy);
-            this.imageViewerPinchStartScale = this.imageViewerScale;
-        } else if (e.touches.length === 1 && this.imageViewerScale > 1) {
-            this.imageViewerPanning = true;
-            this.imageViewerPanStartX = e.touches[0].clientX;
-            this.imageViewerPanStartY = e.touches[0].clientY;
-            this.imageViewerPanOrigX = this.imageViewerPanX;
-            this.imageViewerPanOrigY = this.imageViewerPanY;
-        }
-    };
-
-    private onImageViewerTouchMove = (e: TouchEvent): void => {
-        if (e.touches.length === 2 && this.imageViewerPinchStartDist > 0) {
-            e.preventDefault();
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            const dist = Math.hypot(dx, dy);
-            this.imageViewerScale = Math.max(0.5, Math.min(5,
-                this.imageViewerPinchStartScale * (dist / this.imageViewerPinchStartDist)
-            ));
-            if (this.imageViewerScale <= 1) {
-                this.imageViewerPanX = 0;
-                this.imageViewerPanY = 0;
-            }
-            this.applyImageViewerTransform();
-        } else if (e.touches.length === 1 && this.imageViewerPanning) {
-            this.imageViewerPanX = this.imageViewerPanOrigX + (e.touches[0].clientX - this.imageViewerPanStartX);
-            this.imageViewerPanY = this.imageViewerPanOrigY + (e.touches[0].clientY - this.imageViewerPanStartY);
-            this.clampPan();
-            this.applyImageViewerTransform();
-        }
-    };
-
-    private onImageViewerTouchEnd = (_e: TouchEvent): void => {
-        this.imageViewerPanning = false;
-        this.imageViewerPinchStartDist = 0;
-    };
 
     // ── Selection support ──
 

@@ -122,7 +122,7 @@ export class EpubOutlineView extends ItemView {
 		});
 		clearBtn.addEventListener("click", () => {
 			this.searchQuery = "";
-			this.searchInputEl!.value = "";
+			if (this.searchInputEl) this.searchInputEl.value = "";
 			this.rebuildTree();
 			this.searchInputEl?.focus();
 		});
@@ -285,6 +285,7 @@ export class EpubOutlineView extends ItemView {
 		}
 
 		const self = itemEl.createDiv({ cls: "epub-outline-item-self" });
+		self.createDiv({ cls: "epub-outline-inner", text: item.label });
 
 		const hasChildren = item.children.length > 0;
 		if (hasChildren) {
@@ -302,7 +303,6 @@ export class EpubOutlineView extends ItemView {
 				});
 		}
 
-		const inner = self.createSpan({ cls: "epub-outline-inner", text: item.label });
 
 		self.addEventListener("click", () => {
 			this.onNavigateCallback?.(item.chapterIndex);
