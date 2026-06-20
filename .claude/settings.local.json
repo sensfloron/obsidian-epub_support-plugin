@@ -15,7 +15,25 @@
       "Bash(sed -i '358s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\if \\(top + popoverH > window.innerHeight - 8\\) {/' src/view/epub_view.ts)",
       "Bash(sed -i '359s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\ttop = window.innerHeight - popoverH - 8;/' src/view/epub_view.ts)",
       "Bash(sed -i '360s/^.*$/\\\\\\\\t\\\\\\\\t\\\\\\\\}/' src/view/epub_view.ts)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:wiki.webkit.org)",
+      "WebFetch(domain:frontendmasters.com)",
+      "WebFetch(domain:www2.webkit.org)",
+      "WebFetch(domain:developer.chrome.com)",
+      "WebFetch(domain:engineering.monday.com)",
+      "WebFetch(domain:npm-compare.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:devgex.com)",
+      "WebFetch(domain:tympanus.net)",
+      "Bash(git stash *)",
+      "Bash(graphify update *)",
+      "Bash(npx graphify *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\floron\\.claude\\memory"
     ]
   }
 }

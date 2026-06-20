@@ -18,8 +18,6 @@ export interface EpubPluginSettings {
     immersiveDefault: boolean;
 }
 
-/** 翻页冷却时间（毫秒），防止滚轮/按键快速连续翻页 */
-export const PAGE_TURN_COOLDOWN_MS = 250;
 
 export const DEFAULT_SETTINGS: EpubPluginSettings = {
     viewMode: 'paginated',

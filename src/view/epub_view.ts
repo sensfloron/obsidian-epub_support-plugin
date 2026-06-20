@@ -1,5 +1,5 @@
 import { FileView, Platform, TFile, WorkspaceLeaf, MarkdownRenderer } from "obsidian";
-import { EpubPluginSettings, PAGE_TURN_COOLDOWN_MS } from "../setting/settings";
+import { EpubPluginSettings } from "../setting/settings";
 import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
 import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
@@ -108,7 +108,6 @@ export class EpubView extends FileView {
     private footnoteManager: FootnoteManager;
     private imageViewerController: ImageViewerController;
     private progressTracker: ProgressTracker;
-    private lastKeyTime = 0;
     private selectionBar: HTMLElement | null = null;
     private viewHeaderHoverCleanup: (() => void) | null = null;
     private immersiveActive = false;
@@ -126,7 +125,11 @@ export class EpubView extends FileView {
         this.progressTracker = new ProgressTracker(progressStore, () => this.onProgressSave?.());
         this.imageViewerController = new ImageViewerController(this.contentEl);
         this.footnoteManager = new FootnoteManager(this.contentEl, {
-            onImageClick: (img) => this.imageViewerController.show(img),
+            onImageClick: (img) => {
+                // 翻页动画中屏蔽图片查看，避免误触
+                if (this.paginator?.isAnimating()) return;
+                this.imageViewerController.show(img);
+            },
             onContentChanged: () => this.highlightCodeBlocks(),
         });
     }
@@ -614,21 +617,16 @@ export class EpubView extends FileView {
             const tag = (evt.target as HTMLElement)?.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-            const now = Date.now();
-            if (now - this.lastKeyTime < PAGE_TURN_COOLDOWN_MS) return;
-
             switch (evt.key) {
                 case 'ArrowLeft':
                 case 'PageUp':
                     evt.preventDefault();
-                    this.lastKeyTime = now;
                     this.paginator.navigatePage(-1);
                     break;
                 case 'ArrowRight':
                 case ' ':
                 case 'PageDown':
                     evt.preventDefault();
-                    this.lastKeyTime = now;
                     this.paginator.navigatePage(1);
                     break;
             }
