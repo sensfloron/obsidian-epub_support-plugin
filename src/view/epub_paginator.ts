@@ -3,19 +3,6 @@ import { EpubPluginSettings } from "../setting/settings";
 /** 滚轮事件的最短节流间隔（毫秒），防止高频触发导致过度累积 */
 const WHEEL_THROTTLE_MS = 50;
 
-/**
- * 解析 CSS `matrix()` / `matrix3d()` 中的 X 平移值。
- */
-function parseTransformX(transform: string): number {
-    if (!transform || transform === 'none') return 0;
-    const m = transform.match(/matrix(?:3d)?\(([^)]+)\)/);
-    if (!m) return 0;
-    const vals = m[1].split(",").map(v => parseFloat(v.trim()));
-    // matrix(a,b,c,d,tx,ty) → tx = vals[4]
-    // matrix3d(a,...,m,n,o,p) → tx = vals[12]
-    return vals.length === 16 ? (vals[12] || 0) : (vals[4] || 0);
-}
-
 export class EpubPaginator {
     private viewportEl: HTMLElement | null = null;
     private trackEl: HTMLElement | null = null;
@@ -26,7 +13,6 @@ export class EpubPaginator {
     private totalPages = 1;
     private pageWidth = 0;
     private pageHeight = 0;
-    private isChapterAnimating = false;
     private resizeObserver: ResizeObserver | null = null;
     private touchStartX = 0;
     private touchStartY = 0;
@@ -36,24 +22,10 @@ export class EpubPaginator {
     private swipeHandled = false;
     private touchInEdgeZone = false;
 
-    // ── 累积翻页 + 动画刹车 ──
-
-    /** 累积的翻页偏移量（快速操作累加，动画消费后归零） */
-    private accumulatedDelta = 0;
-
-    /** 当前同章节翻页动画（Web Animation），用于读取进度和刹车中断 */
-    private pageAnim: Animation | null = null;
-
-    /** 当前动画的起始 translateX（用于计算实时位置） */
-    private animStartX = 0;
-
-    /** 当前动画的目标 translateX（用于计算实时位置） */
-    private animEndX = 0;
-
-    /** 章节切换动画完成后的待执行回调（排队用） */
+    /** 章节切换完成后的待执行回调（排队用） */
     private pendingChapterChange: (() => void) | null = null;
 
-    /** 章节切换动画内部的嵌套超时定时器 */
+    /** 章节切换内部的嵌套超时定时器 */
     private chapterAnimTimeout: ReturnType<typeof setTimeout> | null = null;
 
     private settings: EpubPluginSettings;
@@ -79,169 +51,75 @@ export class EpubPaginator {
     }
 
     /**
-     * 加载新章节内容。`direction`: 1 = 下一章（从右侧滑入），
-     * -1 = 上一章（从左侧滑入），0 = 无动画（初始加载）。
+     * 加载新章节内容。`direction`: 1 = 下一章，
+     * -1 = 上一章，0 = 初始加载。无动画。
      */
     loadChapter(html: string, direction: -1 | 0 | 1 = 0): void {
         if (!this.viewportEl || !this.trackEl) return;
 
-        // 若已在章节切换动画中 → 排队，完成后执行最新的一次
-        if (this.isChapterAnimating) {
-            this.pendingChapterChange = () => { this.loadChapter(html, direction); };
-            return;
-        }
-
-        // 取消可能正在运行的同章节翻页动画
-        this.pageAnim?.cancel();
-        this.pageAnim = null;
-        this.accumulatedDelta = 0;
-
         const track = this.trackEl;
-        const dur = this.settings.transitionDuration;
 
         this.clearChapterAnimTimeout();
-        this.isChapterAnimating = true;
         this.measureViewport();
 
+        // 直接替换内容，无动画
+        this.applyTrackStyles();
+        track.innerHTML = this.buildChapterHTML(html);
+
+        // 计算总页数
+        void track.offsetHeight; // 强制重排，让分列布局生效
+        this.totalPages = this.calculateTotalPages();
+
+        // 根据方向设置当前页码
         if (direction === 0) {
-            this.applyTrackStyles(false);
-            track.innerHTML = this.buildChapterHTML(html);
             this.currentPage = 0;
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    this.totalPages = this.calculateTotalPages();
-                    this.updateTransform(false);
-                    this.updatePageIndicator();
-                    this.finalizeChapterTransition();
-                });
-            });
-            return;
+        } else if (direction === -1) {
+            // 后退时定位到最后一页
+            this.currentPage = Math.max(0, this.totalPages - 1);
+        } else {
+            // 前进时定位到第一页
+            this.currentPage = 0;
         }
 
-        const pageW = this.pageWidth + this.settings.columnGap;
-        const currentX = -this.currentPage * pageW;
-        const exitX = currentX + (direction === 1 ? -pageW : pageW);
-        const enterX = direction === 1 ? pageW : -pageW;
+        this.updateTransform();
+        this.updatePageIndicator();
 
-        // 第一步：将当前内容滑出
-        this.applyTrackStyles(true);
-        track.style.transform = `translateX(${exitX}px)`;
-
-        this.chapterAnimTimeout = setTimeout(() => {
-            // 第二步：在屏幕外替换内容，同时计算页数
-            track.style.transition = 'none';
-            track.style.transform = `translateX(${enterX}px)`;
-            track.innerHTML = this.buildChapterHTML(html);
-
-            // 在屏幕外计算总页数，以便滑入时直接定位到正确的页面
-            this.applyTrackStyles(false);
-            void track.offsetHeight; // 强制重排，让分列布局生效
-            this.totalPages = this.calculateTotalPages();
-
-            // 前进时定位到第一页，后退时定位到最后一页
-            this.currentPage = direction === -1
-                ? Math.max(0, this.totalPages - 1)
-                : 0;
-
-            const targetX = -this.currentPage * pageW;
-            const startX = targetX + (direction === 1 ? pageW : -pageW);
-
-            // 设置动画样式并定位到屏幕外
-            this.applyTrackStyles(true);
-            track.style.transition = 'none';
-            track.style.transform = `translateX(${startX}px)`;
-            void track.offsetHeight; // 强制重排
-
-            // 第三步：将新内容滑入到正确的页面位置
-            track.style.transition = `transform ${dur}ms cubic-bezier(0.4, 0, 0.2, 1)`;
-            track.style.transform = `translateX(${targetX}px)`;
-
-            // 第四步：动画结束后，固化布局
-            this.chapterAnimTimeout = setTimeout(() => {
-                this.applyTrackStyles(false);
-                this.updateTransform(false);
-                this.updatePageIndicator();
-                this.finalizeChapterTransition();
-            }, dur);
-        }, dur);
+        // 处理可能的排队章节切换
+        if (this.pendingChapterChange) {
+            const next = this.pendingChapterChange;
+            this.pendingChapterChange = null;
+            next();
+        }
     }
 
     /**
-     * 翻页（累积式）。
-     *
-     * - 如果无动画运行，从当前位置直接启动动画。
-     * - 如果已有翻页动画执行中，将 delta 累积后刹车重定向：
-     *   - 同方向：继续向更远目标前进
-     *   - 反方向：从当前插值位置平滑反向
+     * 翻页（无动画）。
      */
     navigatePage(delta: number): boolean {
-        // 章节切换动画中 → 只累积，暂不处理
-        if (this.isChapterAnimating) {
-            this.accumulatedDelta += delta;
-            return true;
-        }
-
         // 边界检查（基于 currentPage + 本次 delta）
         const nextPage = this.currentPage + delta;
         if (nextPage < 0) {
-            this.cancelAnimAndSnap();
-            this.accumulatedDelta = 0;
             this.onChapterBoundary?.(-1);
             return false;
         }
         if (nextPage >= this.totalPages) {
-            this.cancelAnimAndSnap();
-            this.accumulatedDelta = 0;
             this.onChapterBoundary?.(1);
             return false;
         }
 
-        // 累积偏移
-        this.accumulatedDelta += delta;
+        // 直接跳转到目标页面
+        this.currentPage = nextPage;
+        this.updateTransform();
+        this.updatePageIndicator();
+        this.onPageChangeCallback?.(this.currentPage, this.totalPages);
 
-        if (this.pageAnim) {
-            // 动画刹车：取消当前动画，从当前位置向新总目标重新启动
-            const currentX = this.getCurrentTransformX();
-            const targetTotal = this.currentPage + this.accumulatedDelta;
-
-            // 边界检查（基于累积总目标）
-            if (targetTotal < 0 || targetTotal >= this.totalPages) {
-                this.pageAnim.cancel();
-                this.pageAnim = null;
-                this.trackEl!.style.transform = `translateX(${currentX}px)`;
-                const sign = Math.sign(this.accumulatedDelta) as -1 | 0 | 1;
-                this.accumulatedDelta = 0;
-                this.onChapterBoundary?.(sign === 1 ? 1 : -1);
-                return false;
-            }
-
-            this.pageAnim.cancel();
-            this.pageAnim = null;
-
-            this.animateToPage(targetTotal, currentX);
-        } else {
-            // 无动画运行 → 直接启动
-            const target = this.currentPage + this.accumulatedDelta;
-
-            if (target < 0 || target >= this.totalPages) {
-                this.accumulatedDelta = 0;
-                this.onChapterBoundary?.(Math.sign(delta) as -1 | 1);
-                return false;
-            }
-
-            this.animateToPage(target);
-        }
         return true;
     }
 
     goToPage(index: number): void {
         if (index < 0 || index >= this.totalPages) return;
-        // 取消所有运行中的动画
-        this.pageAnim?.cancel();
-        this.pageAnim = null;
-        this.accumulatedDelta = 0;
         this.currentPage = index;
-        this.updateTransform(false);
+        this.updateTransform();
         this.updatePageIndicator();
         this.onPageChangeCallback?.(this.currentPage, this.totalPages);
     }
@@ -250,9 +128,9 @@ export class EpubPaginator {
         return { current: this.currentPage, total: this.totalPages };
     }
 
-    /** 当前是否处于翻页动画或章节切换动画中。 */
+    /** 当前是否处于翻页动画或章节切换动画中（已禁用动画，总是返回 false）。 */
     isAnimating(): boolean {
-        return this.pageAnim !== null || this.isChapterAnimating;
+        return false;
     }
 
     /** 获取当前页第一个可见句子的 data-si 索引。 */
@@ -283,8 +161,6 @@ export class EpubPaginator {
 
     destroy(): void {
         this.clearChapterAnimTimeout();
-        this.pageAnim?.cancel();
-        this.pageAnim = null;
         this.unbindEvents();
         this.viewportEl?.remove();
         this.viewportEl = null;
@@ -316,11 +192,10 @@ export class EpubPaginator {
         return this.settings.columnCount;
     }
 
-    private applyTrackStyles(animate: boolean): void {
+    private applyTrackStyles(): void {
         if (!this.trackEl) return;
         const count = this.resolveColumnCount();
         const gap = this.settings.columnGap;
-        const dur = this.settings.transitionDuration;
         const totalGap = gap * (count - 1);
         const colWidth = (this.pageWidth - totalGap) / count;
 
@@ -330,9 +205,7 @@ export class EpubPaginator {
             columnFill: "auto",
             height: `${this.pageHeight}px`,
             width: "auto",
-            transition: animate
-                ? `transform ${dur}ms cubic-bezier(0.4, 0, 0.2, 1)`
-                : "none",
+            transition: "none", // 始终禁用动画
         });
     }
 
@@ -342,10 +215,10 @@ export class EpubPaginator {
         return Math.max(1, Math.ceil(scrollW / (this.pageWidth + this.settings.columnGap)));
     }
 
-    private updateTransform(animate: boolean): void {
+    private updateTransform(): void {
         if (!this.trackEl) return;
         const x = -this.currentPage * (this.pageWidth + this.settings.columnGap);
-        this.applyTrackStyles(animate);
+        this.applyTrackStyles();
         this.trackEl.style.transform = `translateX(${x}px)`;
     }
 
@@ -422,86 +295,25 @@ export class EpubPaginator {
     // ── 累积翻页：动画刹车核心 ──
 
     /**
-     * 使用 Web Animations API 驱动翻页动画，支持中途刹车重定向。
+     * 直接跳转到指定页面，无动画。
      *
      * @param targetPage  目标页码
-     * @param fromX       可选的起始 translateX；不传则读取当前计算值
      */
-    private animateToPage(targetPage: number, fromX?: number): void {
+    private animateToPage(targetPage: number): void {
         if (!this.trackEl) return;
-
-        const pageW = this.pageWidth + this.settings.columnGap;
-        const targetX = -targetPage * pageW;
-        const startX = fromX ?? this.getCurrentTransformX();
-        const dur = this.settings.transitionDuration;
 
         // 更新逻辑状态
         this.currentPage = targetPage;
-        this.accumulatedDelta = 0;
 
-        // 保存动画起止位置，供 getCurrentTransformX 计算实时进度
-        this.animStartX = startX;
-        this.animEndX = targetX;
-
-        const anim = this.trackEl.animate(
-            [
-                { transform: `translateX(${startX}px)` },
-                { transform: `translateX(${targetX}px)` },
-            ],
-            {
-                duration: dur,
-                easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
-                fill: 'forwards',
-            }
-        );
-        this.pageAnim = anim;
-
-        // 动画正常完成后固化
-        anim.finished
-            .then(() => {
-                if (!this.trackEl) return;
-                // 将最终位置写入 style 层（解除动画引用）
-                this.trackEl.style.transform = `translateX(${targetX}px)`;
-                if (this.pageAnim === anim) {
-                    this.pageAnim = null;
-                }
-                this.updatePageIndicator();
-                this.onPageChangeCallback?.(this.currentPage, this.totalPages);
-            })
-            .catch(() => {
-                // 动画被 cancel（刹车 / 章节切换 / destroy）→ 静默忽略
-                if (this.pageAnim === anim) {
-                    this.pageAnim = null;
-                }
-            });
+        // 直接设置目标位置，无动画
+        this.updateTransform();
+        this.updatePageIndicator();
+        this.onPageChangeCallback?.(this.currentPage, this.totalPages);
     }
 
-    /** 获取 track 元素当前的实时 translateX 值（考虑进行中的 Web Animation） */
-    private getCurrentTransformX(): number {
-        if (this.pageAnim && this.pageAnim.currentTime !== null) {
-            const progress = this.settings.transitionDuration > 0
-                ? Number(this.pageAnim.currentTime) / this.settings.transitionDuration
-                : 1;
-            const clamped = Math.min(1, Math.max(0, progress));
-            return this.animStartX + (this.animEndX - this.animStartX) * clamped;
-        }
-        return parseTransformX(getComputedStyle(this.trackEl!).transform);
-    }
 
-    /** 取消翻页动画并保持当前视觉位置 */
-    private cancelAnimAndSnap(): void {
-        if (!this.pageAnim) return;
-        const x = this.getCurrentTransformX();
-        this.pageAnim.cancel();
-        this.pageAnim = null;
-        if (this.trackEl) {
-            this.trackEl.style.transform = `translateX(${x}px)`;
-        }
-    }
-
-    /** 章节切换动画完成后的收尾（解锁 + 处理排队） */
+    /** 章节切换完成后的清理（处理排队） */
     private finalizeChapterTransition(): void {
-        this.isChapterAnimating = false;
         this.clearChapterAnimTimeout();
 
         if (this.pendingChapterChange) {
@@ -616,13 +428,6 @@ export class EpubPaginator {
         if (now - this.lastWheelTime < WHEEL_THROTTLE_MS) return;
         this.lastWheelTime = now;
 
-        // 章节切换动画中 → 累积但暂不处理
-        if (this.isChapterAnimating) {
-            this.accumulatedDelta += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) > 0 ? 1 : -1;
-            e.preventDefault();
-            return;
-        }
-
         if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
             // 水平滚动：视为翻页
             if (e.deltaX > 0) {
@@ -668,9 +473,6 @@ export class EpubPaginator {
     private onResize = (): void => {
         if (!this.trackEl) return;
 
-        // 取消所有运行中的动画
-        this.pageAnim?.cancel();
-        this.pageAnim = null;
         this.clearChapterAnimTimeout();
 
         const prevTotal = this.totalPages;
@@ -678,11 +480,8 @@ export class EpubPaginator {
             ? this.currentPage / (prevTotal - 1)
             : 0;
 
-        this.isChapterAnimating = false;
-        this.accumulatedDelta = 0;
-
         this.measureViewport();
-        this.applyTrackStyles(false);
+        this.applyTrackStyles();
 
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -692,7 +491,7 @@ export class EpubPaginator {
                     Math.round(progress * Math.max(1, newTotal - 1)),
                     newTotal - 1
                 );
-                this.updateTransform(false);
+                this.updateTransform();
                 this.updatePageIndicator();
                 this.onPageChangeCallback?.(this.currentPage, this.totalPages);
             });

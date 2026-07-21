@@ -30,7 +30,10 @@
       "WebFetch(domain:tympanus.net)",
       "Bash(git stash *)",
       "Bash(graphify update *)",
-      "Bash(npx graphify *)"
+      "Bash(npx graphify *)",
+      "Bash(graphify query *)",
+      "Bash(npm run *)",
+      "Bash(timeout 120 npm run build)"
     ],
     "additionalDirectories": [
       "C:\\Users\\floron\\.claude\\memory"
