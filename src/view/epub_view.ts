@@ -1,7 +1,9 @@
-import { FileView, Platform, TFile, WorkspaceLeaf, MarkdownRenderer } from "obsidian";
+import { FileView, Platform, TFile, WorkspaceLeaf } from "obsidian";
 import { EpubPluginSettings } from "../setting/settings";
 import { initSync as initParseSync, EpubHandle } from "../lib/epub_parse_module/pkg/epub_parse_module";
-import { initSync as initNoteSync, TextProcessor } from "../lib/epub_note_module/pkg/epub_note_module";
+import { initSync as initNoteSync, TextProcessor,
+    get_combined_theme_css,
+} from "../lib/epub_note_module/pkg/epub_note_module";
 import { EpubPaginator } from "./epub_paginator";
 import { EpubProgress, ProgressStore } from "../lib/progress_store";
 import { ProgressTracker } from "../lib/progress_tracker";
@@ -45,7 +47,10 @@ pre {
     border-radius: 3px;
     padding: 2px 5px;
     font-size: 0.9em;
-}`;
+}
+
+/* ── 语法高亮 CSS 由 Rust/WASM 动态生成并注入到 epub-syntax-theme-style ── */
+`;
 
     try {
         let css = await read(`${FONTS_DIR}/hack-subset.css`);
@@ -274,44 +279,80 @@ export class EpubView extends FileView {
         const container =
             this.contentEl.querySelector(".epub-paginated-track") ??
             this.contentEl.querySelector(".epub-content");
-        if (!container) return;
+        if (!container || !this.textProcessor) return;
 
-        const preElements = container.querySelectorAll("pre");
-        preElements.forEach((pre) => {
-            if (pre.querySelector(".code-block-pre")) return;
-
-            const text = pre.textContent ?? "";
-            if (!text.trim()) return;
-
-            const md = "```\n" + text + "\n```";
-            const wrapper = document.createElement("span");
-            MarkdownRenderer.render(
-                this.app,
-                md,
-                wrapper,
-                "",
-                this
-            ).then(() => {
-                const rendered = wrapper.querySelector(".markdown-rendered pre");
-                if (rendered) {
-                    pre.replaceWith(rendered);
-                }
-                wrapper.remove();
-            });
+        // 仅处理未被 Rust 侧标记的 <pre> 块（如脚注动态注入的内容）
+        const unhighlighted = Array.from(
+            container.querySelectorAll("pre")
+        ).filter((pre) => {
+            // 已由 Rust 高亮 → 含有 tok- class
+            if (pre.querySelector("[class*='tok-']")) return false;
+            // 已由 Obsidian MarkdownRenderer 处理
+            if (pre.querySelector(".code-block-pre")) return false;
+            // 已由本方法处理过
+            if (pre.hasAttribute("data-epub-highlighted")) return false;
+            return true;
         });
+
+        for (const pre of unhighlighted) {
+            const text = pre.textContent ?? "";
+            if (!text.trim()) continue;
+
+            try {
+                // 包装为 <pre> 以便 highlight_code_blocks() 识别
+                const highlighted = this.textProcessor.highlight_code_blocks(
+                    `<pre>${text}</pre>`
+                );
+                const temp = document.createElement("div");
+                temp.innerHTML = highlighted;
+                const newPre = temp.querySelector("pre");
+                if (newPre) {
+                    newPre.setAttribute("data-epub-highlighted", "");
+                    pre.replaceWith(newPre);
+                }
+                temp.remove();
+            } catch (err) {
+                console.debug("[epub] highlightCodeBlocks WASM error:", err);
+            }
+        }
     }
 
     private async ensureFontStyle(): Promise<void> {
-        if (document.head.querySelector("style.epub-font-style")) return;
+        if (!document.head.querySelector("style.epub-font-style")) {
+            const css = await loadFontCss(
+                (p) => this.app.vault.adapter.read(p),
+                (p) => this.app.vault.adapter.readBinary(p)
+            );
+            const styleEl = document.createElement("style");
+            styleEl.className = "epub-font-style";
+            styleEl.textContent = css;
+            document.head.appendChild(styleEl);
+        }
 
-        const css = await loadFontCss(
-            (p) => this.app.vault.adapter.read(p),
-            (p) => this.app.vault.adapter.readBinary(p)
-        );
-        const styleEl = document.createElement("style");
-        styleEl.className = "epub-font-style";
-        styleEl.textContent = css;
-        document.head.appendChild(styleEl);
+        // 语法高亮主题 CSS —— 注入一次，通过 CSS 级联自动跟随 Obsidian 主题切换
+        this.ensureSyntaxThemeStyle();
+    }
+
+    /**
+     * 注入语法高亮 CSS（仅调用一次）。
+     *
+     * 生成的 CSS 同时包含亮色（默认）和暗色（body.theme-dark 覆写）规则，
+     * 浏览器会根据 body 的 class 自动应用正确的主题颜色，
+     * 无需 JavaScript 监听 Obsidian 主题切换。
+     */
+    private ensureSyntaxThemeStyle(): void {
+        if (!noteWasmReady) return;
+        if (document.head.querySelector("style.epub-syntax-theme-style")) return;
+
+        try {
+            const css = get_combined_theme_css();
+            const styleEl = document.createElement("style");
+            styleEl.className = "epub-syntax-theme-style";
+            styleEl.textContent = css;
+            document.head.appendChild(styleEl);
+        } catch (err) {
+            console.warn("[epub] Failed to generate syntax theme CSS:", err);
+        }
     }
 
     private setupViewHeaderHover(): void {
