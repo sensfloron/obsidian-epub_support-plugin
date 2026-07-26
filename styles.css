@@ -527,3 +527,75 @@ body.epub-immersive .mobile-toolbar {
 body.epub-immersive .epub-paginated-viewport {
 	height: 100vh;
 }
+
+/* === Code Block: language label + copy button === */
+
+.epub-paginated-track .epub-code-block,
+.epub-content .epub-code-block {
+	margin: 1em 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	overflow: hidden;
+	background: var(--code-background);
+	break-inside: avoid;
+}
+
+.epub-paginated-track .epub-code-header,
+.epub-content .epub-code-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 4px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	font-size: 0.8em;
+}
+
+.epub-paginated-track .epub-code-lang,
+.epub-content .epub-code-lang {
+	color: var(--text-muted);
+	text-transform: lowercase;
+	letter-spacing: 0.02em;
+	user-select: none;
+}
+
+.epub-paginated-track .epub-copy-btn,
+.epub-content .epub-copy-btn {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 10px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
+	font-size: inherit;
+	cursor: pointer;
+	user-select: none;
+	transition: background 0.12s ease, color 0.12s ease;
+}
+
+.epub-paginated-track .epub-copy-btn:hover,
+.epub-content .epub-copy-btn:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.epub-paginated-track .epub-copy-btn.copied,
+.epub-content .epub-copy-btn.copied {
+	color: var(--text-accent);
+}
+
+.epub-paginated-track .epub-copy-btn.copied:hover,
+.epub-content .epub-copy-btn.copied:hover {
+	background: var(--text-accent);
+	color: var(--text-on-accent);
+}
+
+/* 被 .epub-code-block 包裹后，pre 自身不再需要外边距/圆角（由外层接管） */
+.epub-paginated-track .epub-code-block pre,
+.epub-content .epub-code-block pre {
+	margin: 0;
+	border: none;
+	border-radius: 0;
+}

@@ -116,6 +116,8 @@ export class EpubView extends FileView {
     private selectionBar: HTMLElement | null = null;
     private viewHeaderHoverCleanup: (() => void) | null = null;
     private immersiveActive = false;
+    private codeCopyResetTimer: number | null = null;
+    private codeCopyClickRegistered = false;
     onPositionChange: ((label: string) => void) | null = null;
     onProgressSave: (() => void) | null = null;
     onTocReady: ((toc: TocItem[]) => void) | null = null;
@@ -135,7 +137,10 @@ export class EpubView extends FileView {
                 if (this.paginator?.isAnimating()) return;
                 this.imageViewerController.show(img);
             },
-            onContentChanged: () => this.highlightCodeBlocks(),
+            onContentChanged: () => {
+                this.highlightCodeBlocks();
+                this.decorateCodeBlocks();
+            },
         });
     }
 
@@ -250,6 +255,11 @@ export class EpubView extends FileView {
 
         this.footnoteManager.enhance();
         this.highlightCodeBlocks();
+        this.decorateCodeBlocks();
+        if (!this.codeCopyClickRegistered) {
+            this.registerDomEvent(this.contentEl, "click", this.handleCodeCopyClick);
+            this.codeCopyClickRegistered = true;
+        }
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
         this.registerKeyboard();
@@ -316,6 +326,117 @@ export class EpubView extends FileView {
             }
         }
     }
+
+    /**
+     * 为每个代码块包装一层带「语言标签 + 复制按钮」的头部容器。
+     *
+     * 幂等：用 `data-epub-copy` 标记已处理的 `<pre>`，重复调用安全。
+     * 覆盖两条高亮路径产出的 `<pre>`：Rust mark_sentences 内联高亮、
+     * 以及 highlightCodeBlocks() 的脚注路径。按钮放在 `<pre>` 外部，
+     * 不污染其 textContent（复制时不会带上按钮文字）。
+     */
+    private decorateCodeBlocks(): void {
+        const container =
+            this.contentEl.querySelector(".epub-paginated-track") ??
+            this.contentEl.querySelector(".epub-content");
+        if (!container) return;
+
+        const pres = Array.from(container.querySelectorAll("pre")).filter((pre) => {
+            // 已包装过 → 跳过
+            if (pre.parentElement?.classList.contains("epub-code-block")) return false;
+            // 空内容 → 跳过
+            if (!(pre.textContent ?? "").trim()) return false;
+            // Obsidian MarkdownRenderer 自己的代码块 → 不接管
+            if (pre.querySelector(".code-block-pre")) return false;
+            return true;
+        });
+
+        for (const pre of pres) {
+            // 从 class="language-X" 解析语言名
+            const langMatch = pre.className.match(/language-([\w-]+)/);
+            const lang = langMatch ? langMatch[1] : "";
+
+            const wrapper = document.createElement("div");
+            wrapper.className = "epub-code-block";
+            wrapper.setAttribute("data-epub-copy", "");
+
+            const header = document.createElement("div");
+            header.className = "epub-code-header";
+
+            const langLabel = document.createElement("span");
+            langLabel.className = "epub-code-lang";
+            langLabel.textContent = lang || "code";
+
+            const copyBtn = document.createElement("button");
+            copyBtn.className = "epub-copy-btn";
+            copyBtn.type = "button";
+            copyBtn.textContent = "复制";
+
+            header.appendChild(langLabel);
+            header.appendChild(copyBtn);
+            wrapper.appendChild(header);
+
+            // 用 wrapper 包裹 pre（保留 pre 在 DOM 中，事件委托自动覆盖）
+            pre.parentElement?.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+        }
+    }
+
+    /**
+     * 代码块复制按钮的点击处理（事件委托，挂在 contentEl 上）。
+     *
+     * 命中 `.epub-copy-btn` 时：取同容器内 `<pre>` 的纯文本写入剪贴板，
+     * 按钮文字短暂变为「已复制」作为反馈。分页是纯 CSS 列布局不移动节点，
+     * highlightCodeBlocks 的 replaceWith 也不影响委托，故无需重新绑定。
+     */
+    private handleCodeCopyClick = (evt: MouseEvent): void => {
+        const target = evt.target as HTMLElement | null;
+        const btn = target?.closest(".epub-copy-btn") as HTMLButtonElement | null;
+        if (!btn) return;
+
+        evt.preventDefault();
+        evt.stopPropagation();
+
+        const pre = btn.closest(".epub-code-block")?.querySelector("pre");
+        const text = pre?.textContent ?? "";
+        if (!text) return;
+
+        // 防抖：快速连点时先清掉上一次的恢复 timer
+        if (this.codeCopyResetTimer !== null) {
+            window.clearTimeout(this.codeCopyResetTimer);
+            this.codeCopyResetTimer = null;
+        }
+
+        try {
+            navigator.clipboard.writeText(text).then(
+                () => {
+                    btn.textContent = "已复制";
+                    btn.classList.add("copied");
+                    this.codeCopyResetTimer = window.setTimeout(() => {
+                        btn.textContent = "复制";
+                        btn.classList.remove("copied");
+                        this.codeCopyResetTimer = null;
+                    }, 1500);
+                },
+                (err) => {
+                    console.warn("[epub] clipboard writeText rejected:", err);
+                    btn.textContent = "复制失败";
+                    this.codeCopyResetTimer = window.setTimeout(() => {
+                        btn.textContent = "复制";
+                        this.codeCopyResetTimer = null;
+                    }, 1500);
+                },
+            );
+        } catch (err) {
+            // navigator.clipboard 不可用（老版 webview）
+            console.warn("[epub] clipboard API unavailable:", err);
+            btn.textContent = "复制失败";
+            this.codeCopyResetTimer = window.setTimeout(() => {
+                btn.textContent = "复制";
+                this.codeCopyResetTimer = null;
+            }, 1500);
+        }
+    };
 
     private async ensureFontStyle(): Promise<void> {
         if (!document.head.querySelector("style.epub-font-style")) {
@@ -606,6 +727,10 @@ export class EpubView extends FileView {
             this.scrollToChapter(this.currentChapter);
         }
         this.footnoteManager.enhance();
+        // 翻章后 track DOM 被整体重建（paginator.loadChapter 的 innerHTML 赋值），
+        // 之前的 .epub-code-block 包装随之销毁，必须重新 decorate 才能恢复语言标签和复制按钮。
+        // scrolled 模式下 DOM 在文件打开时已预渲染，此处调用幂等无害。
+        this.decorateCodeBlocks();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
         this.progressTracker.flush();
@@ -618,6 +743,7 @@ export class EpubView extends FileView {
         const markedHtml = this.textProcessor.mark_sentences(rawHtml);
         this.paginator.loadChapter(markedHtml, direction);
         this.footnoteManager.enhance();
+        this.decorateCodeBlocks();
         this.notifyPositionChange();
         this.onChapterChange?.(TITLEPAGE_INDEX);
     }
@@ -629,6 +755,7 @@ export class EpubView extends FileView {
         const markedHtml = this.textProcessor.mark_sentences(rawHtml);
         this.paginator.loadChapter(markedHtml, 1);
         this.footnoteManager.enhance();
+        this.decorateCodeBlocks();
         this.notifyPositionChange();
         this.onChapterChange?.(this.currentChapter);
         this.progressTracker.flush();
