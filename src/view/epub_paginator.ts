@@ -51,10 +51,15 @@ export class EpubPaginator {
     }
 
     /**
-     * 加载新章节内容。`direction`: 1 = 下一章，
-     * -1 = 上一章，0 = 初始加载。无动画。
+     * 加载新章节内容。
+     *
+     * @param direction `1` = 下一章，`-1` = 上一章，`0` = 初始加载。
+     * @param initialPage 可选初始页码。用于恢复阅读进度：加载时直接定位
+     *    到该页（钳制到 `[0, totalPages-1]`），避免「先渲染 p0 再 rAF
+     *    跳到目标页」造成的视觉闪烁。仅在 `direction === 0`（初始加载）
+     *    时生效；跨章翻页忽略此参数，仍按 direction 定位到首/末页。
      */
-    loadChapter(html: string, direction: -1 | 0 | 1 = 0): void {
+    loadChapter(html: string, direction: -1 | 0 | 1 = 0, initialPage?: number): void {
         if (!this.viewportEl || !this.trackEl) return;
 
         const track = this.trackEl;
@@ -72,7 +77,12 @@ export class EpubPaginator {
 
         // 根据方向设置当前页码
         if (direction === 0) {
-            this.currentPage = 0;
+            // 初始加载：若指定了 initialPage（恢复进度），直接定位过去，避免闪烁
+            if (typeof initialPage === "number" && initialPage > 0) {
+                this.currentPage = Math.min(initialPage, Math.max(0, this.totalPages - 1));
+            } else {
+                this.currentPage = 0;
+            }
         } else if (direction === -1) {
             // 后退时定位到最后一页
             this.currentPage = Math.max(0, this.totalPages - 1);
@@ -475,25 +485,39 @@ export class EpubPaginator {
 
         this.clearChapterAnimTimeout();
 
+        // 注意：必须保留 currentPage 的绝对值，**不要**用 progress 比例
+        // （currentPage / (prevTotal-1)）反推——否则在 loadChapter 与
+        // 恢复进度 goToPage 的 rAF 竞争中，onResize 会用过期的 progress
+        // （此时 currentPage 仍是加载初值 0）把刚恢复到的页码冲回 0，
+        // 导致 schedule(p0) 覆盖正确的进度。这是"重开文件回到章节首页"
+        // 的根因。
         const prevTotal = this.totalPages;
-        const progress = prevTotal > 1
-            ? this.currentPage / (prevTotal - 1)
-            : 0;
 
         this.measureViewport();
         this.applyTrackStyles();
 
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
+                // 关键修复：在 rAF 回调里**重新读取**此刻的 currentPage，
+                // 而不是用闭包里捕获的 prevPage。这样无论本 rAF 相对于
+                // loadChapter/goToPage 的 rAF 谁先执行，用的都是最新值：
+                // - 若 goToPage 已执行 → currentPage 是恢复的目标页，保留它
+                // - 若 goToPage 未执行 → currentPage 是 0，但随后 goToPage
+                //   会覆盖它，且我们只在"页码真的变化"时才触发回调，不会
+                //   多余地 schedule(0)。
+                const livePage = this.currentPage;
                 const newTotal = this.calculateTotalPages();
                 this.totalPages = newTotal;
-                this.currentPage = Math.min(
-                    Math.round(progress * Math.max(1, newTotal - 1)),
-                    newTotal - 1
-                );
+                const newPage = livePage >= newTotal
+                    ? Math.max(0, newTotal - 1)
+                    : livePage;
+                const changed = newPage !== livePage || newTotal !== prevTotal;
+                this.currentPage = newPage;
                 this.updateTransform();
                 this.updatePageIndicator();
-                this.onPageChangeCallback?.(this.currentPage, this.totalPages);
+                if (changed) {
+                    this.onPageChangeCallback?.(this.currentPage, this.totalPages);
+                }
             });
         });
     };

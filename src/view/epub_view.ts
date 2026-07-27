@@ -10,6 +10,7 @@ import { ProgressTracker } from "../lib/progress_tracker";
 import { TocItem } from "./epub_outline_view";
 import { FootnoteManager } from "./footnote_manager";
 import { ImageViewerController } from "./image_viewer_controller";
+import { NavigationHistory, ReadingLocation } from "./navigation_history";
 
 export const EPUB_FILE_EXTENSION = "epub";
 export const VIEW_TYPE_EPUB = "epub";
@@ -118,6 +119,13 @@ export class EpubView extends FileView {
     private immersiveActive = false;
     private codeCopyResetTimer: number | null = null;
     private codeCopyClickRegistered = false;
+    private mouseButtonRegistered = false;
+    /** 浏览器风格的双栈阅读位置历史（仅当前会话，不持久化）。 */
+    private navHistory = new NavigationHistory();
+    /** 历史回退/前进执行期间为 true，用于抑制四大跳转方法里的二次入栈。 */
+    private isRestoringHistory = false;
+    /** 最近一次 onLoadFile 处理的文件路径，用于检测文件切换以清空历史。 */
+    private lastLoadedPath: string | null = null;
     onPositionChange: ((label: string) => void) | null = null;
     onProgressSave: (() => void) | null = null;
     onTocReady: ((toc: TocItem[]) => void) | null = null;
@@ -145,6 +153,11 @@ export class EpubView extends FileView {
     }
 
     async onLoadFile(file: TFile): Promise<void> {
+        // 切换到不同的 EPUB 文件时，清空阅读历史（历史不跨文件）
+        if (this.lastLoadedPath !== null && this.lastLoadedPath !== file.path) {
+            this.navHistory.clear();
+        }
+        this.lastLoadedPath = file.path;
         this.contentEl.empty();
 
         await Promise.all([
@@ -236,20 +249,13 @@ export class EpubView extends FileView {
             } else {
                 const rawHtml = this.handle.get_chapter_content(this.currentChapter);
                 const markedHtml = this.textProcessor.mark_sentences(rawHtml);
-                this.paginator.loadChapter(markedHtml);
+                // 恢复进度时直接把 initialPage 传给 loadChapter，加载即定位到
+                // 目标页，避免「先渲染 p0 再 rAF 跳转」的视觉闪烁。
+                const restorePage = savedProgress?.pageIndex ?? undefined;
+                this.paginator.loadChapter(markedHtml, 0, restorePage);
 
-                // Restore page if progress exists
-                if (savedProgress && savedProgress.pageIndex != null) {
-                    const pageIndex = savedProgress.pageIndex;
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            this.paginator?.goToPage(pageIndex);
-                        });
-                    });
-                } else {
-                    const p = this.buildProgress();
-                    if (p) this.progressTracker.save(p);
-                }
+                const p = this.buildProgress();
+                if (p) this.progressTracker.save(p);
             }
         }
 
@@ -264,9 +270,27 @@ export class EpubView extends FileView {
         this.onChapterChange?.(this.currentChapter);
         this.registerKeyboard();
         this.registerSelectionEvents();
+        if (!this.mouseButtonRegistered) {
+            this.registerDomEvent(this.contentEl, "mousedown", this.handleMouseButtons);
+            this.mouseButtonRegistered = true;
+        }
         }
 
     // ── Progress persistence (delegated to ProgressTracker) ──
+
+    /**
+     * 离开当前文件时立即落盘进度。
+     *
+     * FileView 的生命周期里，切换标签 / 关闭标签 / 打开别的文件触发的是
+     * onUnloadFile，而非 onunload（后者只在 view 彻底销毁时触发）。
+     * 翻页保存走的是 300ms debounce（progressTracker.schedule），若在窗口
+     * 内离开文件且不在此 flush，pending 进度会丢失，重开时回到上次 flush
+     * 的旧位置（往往是章节首页）—— 这正是「重开文件进度回到章节首页」
+     * 的根因。
+     */
+    async onUnloadFile(file: TFile): Promise<void> {
+        this.progressTracker.flush();
+    }
 
     private buildProgress(): EpubProgress | null {
         if (!this.handle || !this.file) return null;
@@ -389,6 +413,28 @@ export class EpubView extends FileView {
      * 按钮文字短暂变为「已复制」作为反馈。分页是纯 CSS 列布局不移动节点，
      * highlightCodeBlocks 的 replaceWith 也不影响委托，故无需重新绑定。
      */
+    /**
+     * 鼠标侧键（X1/X2 thumb buttons）映射为阅读历史的回退/前进，
+     * 对齐 Chrome/Edge 浏览器侧键行为。
+     *
+     * MouseEvent.button: 3 = X1(后退), 4 = X2(前进)。
+     * 历史栈非空时拦截（preventDefault），避免 Electron 把侧键
+     * 解释为应用级 back/forward 导航；栈空时放行，让默认行为兜底。
+     */
+    private handleMouseButtons = (evt: MouseEvent): void => {
+        if (evt.button === 3) {
+            if (this.navHistory.canGoBack()) {
+                evt.preventDefault();
+                this.goBack();
+            }
+        } else if (evt.button === 4) {
+            if (this.navHistory.canGoForward()) {
+                evt.preventDefault();
+                this.goForward();
+            }
+        }
+    };
+
     private handleCodeCopyClick = (evt: MouseEvent): void => {
         const target = evt.target as HTMLElement | null;
         const btn = target?.closest(".epub-copy-btn") as HTMLButtonElement | null;
@@ -481,7 +527,6 @@ export class EpubView extends FileView {
 
         const leafEl = this.containerEl.closest('.workspace-leaf') as HTMLElement | null;
         const viewHeader = leafEl?.querySelector('.view-header') as HTMLElement | null;
-        console.debug("[epub-immersive] leafEl:", leafEl, "viewHeader:", viewHeader);
         if (!viewHeader) return;
 
         let wasInHeader = false;
@@ -496,10 +541,8 @@ export class EpubView extends FileView {
                 e.clientY <= rect.bottom
             );
             if (inHeader && !wasInHeader) {
-                console.debug("[epub-immersive] enter header → remove immersive");
                 document.body.classList.remove("epub-immersive");
             } else if (!inHeader && wasInHeader) {
-                console.debug("[epub-immersive] leave header → add immersive");
                 document.body.classList.add("epub-immersive");
             }
             wasInHeader = inHeader;
@@ -674,7 +717,103 @@ export class EpubView extends FileView {
         return this.showingTitlePage ? TITLEPAGE_INDEX : this.currentChapter;
     }
 
+    // ── 导航历史（浏览器同款 back/forward） ──
+
+    /** 当前阅读位置的快照。扉页用 TITLEPAGE_INDEX。 */
+    private currentLocation(): ReadingLocation {
+        return {
+            chapterIndex: this.showingTitlePage ? TITLEPAGE_INDEX : this.currentChapter,
+            pageIndex: this.paginator?.getPageInfo().current ?? 0,
+            showingTitlePage: this.showingTitlePage,
+        };
+    }
+
+    /**
+     * 在一次"大跳转"（目录跳转、跨章、扉页切换）执行**前**调用，
+     * 把当前位置压入历史栈。逐页翻页不走这里 → 不入栈，与浏览器
+     * "翻滚/小步移动不入历史"的语义一致。历史回退/前进执行期间
+     * 被抑制，避免无限入栈。
+     */
+    private pushHistorySnapshot(): void {
+        if (this.isRestoringHistory) return;
+        this.navHistory.push(this.currentLocation());
+    }
+
+    /** 浏览器后退：回退一步（若有历史）。 */
+    private goBack(): void {
+        const target = this.navHistory.back(this.currentLocation());
+        if (target) this.restoreLocation(target);
+    }
+
+    /** 浏览器前进：前进一步（若有历史）。 */
+    private goForward(): void {
+        const target = this.navHistory.forward(this.currentLocation());
+        if (target) this.restoreLocation(target);
+    }
+
+    /**
+     * 恢复到指定位置。复用现有的跳转路径（扉页 / 章节加载），
+     * 在 isRestoringHistory 包裹下执行以抑制二次入栈，跳转完成后
+     * 用 paginator.goToPage 精确还原页码。
+     */
+    private restoreLocation(loc: ReadingLocation): void {
+        if (!this.handle || !this.paginator) return;
+
+        this.isRestoringHistory = true;
+        try {
+            if (loc.showingTitlePage) {
+                // 目标是扉页
+                if (!this.showingTitlePage) {
+                    this.showTitlePage(0);
+                }
+                this.restorePage(loc.pageIndex);
+                return;
+            }
+
+            // 目标是正文章节
+            const targetChapter = Math.min(
+                Math.max(0, loc.chapterIndex),
+                this.handle.total_chapters() - 1,
+            );
+
+            if (this.showingTitlePage) {
+                // 从扉页离开：hideTitlePage 总是加载 firstContentChapterIndex，
+                // 因此若目标不是首章，需先离开扉页再 navigateChapter 到目标章。
+                this.hideTitlePage();
+                if (targetChapter !== this.firstContentChapterIndex) {
+                    const delta = targetChapter - this.firstContentChapterIndex;
+                    if (delta !== 0) this.navigateChapter(delta);
+                }
+                this.restorePage(loc.pageIndex);
+                return;
+            }
+
+            // 当前已在正文
+            if (targetChapter !== this.currentChapter) {
+                const delta = targetChapter - this.currentChapter;
+                this.navigateChapter(delta);
+            }
+            this.restorePage(loc.pageIndex);
+        } finally {
+            this.isRestoringHistory = false;
+        }
+    }
+
+    /**
+     * 跳转完成后还原章节内页码。loadChapter 的内容重排在 rAF 后才稳定，
+     * 因此用双层 requestAnimationFrame 确保 goToPage 命中正确的总页数。
+     */
+    private restorePage(pageIndex: number): void {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this.paginator?.goToPage(pageIndex);
+                this.notifyPositionChange();
+            });
+        });
+    }
+
     navigateToChapter(index: number): void {
+        this.pushHistorySnapshot();
         if (index === TITLEPAGE_INDEX) {
             if (!this.showingTitlePage) {
                 this.showTitlePage(0);
@@ -698,12 +837,14 @@ export class EpubView extends FileView {
 
         // 从第一个内容章节往回翻：展示生成的扉页，跳过前置内容
         if (delta === -1 && !this.showingTitlePage && this.currentChapter === this.firstContentChapterIndex) {
+            this.pushHistorySnapshot();
             this.showTitlePage();
             return;
         }
 
         // 从扉页往后翻：回到第一个内容章节
         if (delta === 1 && this.showingTitlePage) {
+            this.pushHistorySnapshot();
             this.hideTitlePage();
             return;
         }
@@ -716,6 +857,7 @@ export class EpubView extends FileView {
         const total = this.handle.total_chapters();
         const next = this.currentChapter + delta;
         if (next < 0 || next >= total) return;
+        this.pushHistorySnapshot();
         this.showingTitlePage = false;
         this.currentChapter = next;
 
@@ -778,12 +920,38 @@ export class EpubView extends FileView {
     }
 
     private registerKeyboard(): void {
+        // 浏览器同款回退/前进：Alt+Left / Alt+Right。
+        // 两种阅读模式都生效；EPUB 视图激活时拦截，避免触发 Obsidian 面板切换。
+        this.registerDomEvent(document, 'keydown', (evt: KeyboardEvent) => {
+            if (this.app.workspace.getActiveViewOfType(EpubView) !== this) return;
+            const tag = (evt.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if (!evt.altKey || evt.ctrlKey || evt.metaKey || evt.shiftKey) return;
+
+            if (evt.key === 'ArrowLeft') {
+                if (this.navHistory.canGoBack()) {
+                    evt.preventDefault();
+                    this.goBack();
+                }
+                return;
+            }
+            if (evt.key === 'ArrowRight') {
+                if (this.navHistory.canGoForward()) {
+                    evt.preventDefault();
+                    this.goForward();
+                }
+                return;
+            }
+        });
+
         if (this.settings.viewMode !== 'paginated') return;
         this.registerDomEvent(document, 'keydown', (evt: KeyboardEvent) => {
             if (!this.paginator) return;
             if (this.app.workspace.getActiveViewOfType(EpubView) !== this) return;
             const tag = (evt.target as HTMLElement)?.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            // 带 Alt 的是历史导航，交给上面的处理器；带 Ctrl/Meta 的留给 Obsidian
+            if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
 
             switch (evt.key) {
                 case 'ArrowLeft':
@@ -817,6 +985,8 @@ export class EpubView extends FileView {
         this.textProcessor = null;
         this.handle?.free();
         this.handle = null;
+        this.navHistory.clear();
+        this.lastLoadedPath = null;
     }
 
     getDisplayText() {
